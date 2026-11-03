@@ -22,3 +22,8 @@ behaviour require hardware and Home Assistant validation.
   behaviour: PalPulse has a config flow, so a restart prompt is not expected.
   Marketplace handles restart notifications after an update or removal.
 - Remove outdated HACS/Marketplace GitHub-topic setup warning.
+
+- Keep project-facing documentation independent of predecessor branding, while
+  linking the ESPHome project's engineering provenance record.
+- Explain that Marketplace's update entity is not an energy sensor, and where
+  to inspect the external hourly energy statistics after configuring a meter.
