@@ -17,3 +17,8 @@ behaviour require hardware and Home Assistant validation.
 
 - Document compatibility with Home Assistant 2026.11's built-in Marketplace,
   and retain HACS instructions for older Home Assistant releases.
+
+- Clarify Home Assistant 2026.11 Marketplace's first-install hot-loading
+  behaviour: PalPulse has a config flow, so a restart prompt is not expected.
+  Marketplace handles restart notifications after an update or removal.
+- Remove outdated HACS/Marketplace GitHub-topic setup warning.
