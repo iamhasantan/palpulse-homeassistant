@@ -1,14 +1,20 @@
 {
   "domain": "palpulse",
   "name": "PalPulse Historical Energy",
-  "version": "0.1.0b1",
-  "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
-  "issue_tracker": "https://github.com/iamhasantan/palpulse-homeassistant/issues",
+  "after_dependencies": [
+    "esphome"
+  ],
+  "codeowners": [
+    "@iamhasantan"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
-  "after_dependencies": ["esphome"],
-  "codeowners": ["@iamhasantan"],
+  "dependencies": [
+    "recorder"
+  ],
+  "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
   "integration_type": "service",
   "iot_class": "local_push",
-  "requirements": []
+  "issue_tracker": "https://github.com/iamhasantan/palpulse-homeassistant/issues",
+  "requirements": [],
+  "version": "0.1.0b1"
 }
