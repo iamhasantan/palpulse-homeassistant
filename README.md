@@ -19,8 +19,10 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
    and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
    **Integration**. On **HA 2026.10 or older**, add the same URL under
    **HACS > Custom repositories**.
-2. Install **PalPulse Historical Energy** after HACS/Marketplace recognises
-   the repository. The beta source is now on `main`.
+2. Install **PalPulse Historical Energy** after Marketplace/HACS recognises
+   the repository. On Home Assistant 2026.11 and later, a **first installation**
+   of a config-flow integration can be loaded immediately. **No restart prompt
+   is expected**. If you see **Add service**, continue to step 3.
 3. Open **Settings > Devices & services > Add integration > PalPulse Historical
    Energy**. Enter the **Powerpal BLE meter MAC**, not the ESP32 Wi-Fi MAC.
 4. Update your PalPulse ESPHome YAML as described below and rebuild/test it.
@@ -29,12 +31,32 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
 6. Listen to `esphome.palpulse_record` under Developer Tools > Events before
    selecting the new historical statistics source.
 
-**Beta status:** the source is available on the **default branch**, but
-GitHub repository topics must be set before the Marketplace repository check
-can pass. On GitHub, edit repository details and add topics such as
-`home-assistant`, `hacs`, and `energy-monitoring`. The app is experimental:
-test imports before selecting the external statistic for grid consumption.
-Do not select both the old Powerpal entity and the new external statistic.
+**Beta status:** the source is available on `main`. This is an
+experimental integration: validate timestamped imports before selecting the
+external statistic for grid consumption. Never select both the old Powerpal
+entity and the new external statistic.
+
+### Does Home Assistant need restarting?
+
+- **First installation on Home Assistant 2026.11+:** Normally **no**. Marketplace
+  hot-loads a newly installed integration with a config flow such as PalPulse.
+  If you can see its **Add service** button in Devices & services, no restart
+  is required before adding the Powerpal meter.
+- **Update or removal of an already loaded integration:** **Yes**. Marketplace
+  creates a Home Assistant **Repairs** notification with a restart action.
+  This prompt is owned by Marketplace, not by the PalPulse integration.
+- **Home Assistant 2026.10 and older with standalone HACS:** Restart Home
+  Assistant Core after installing or updating the custom integration.
+- **If PalPulse is missing from Add integration after installation:** Check
+  **Settings > System > Repairs** and the Home Assistant logs. A manual
+  restart is a reasonable troubleshooting step.
+
+The integration cannot force an install-time restart prompt because its code
+does not run before Marketplace has loaded it. PalPulse deliberately does
+**not** require or trigger an unnecessary restart on a first installation.
+See the official [Marketplace restart behaviour](
+https://contributors.home-assistant.io/marketplace/guides/integrations/#restarts)
+for the exact rules.
 
 The new statistic ID is
 `palpulse:powerpal_<12 lowercase hex digits>_energy`.
