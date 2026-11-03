@@ -58,6 +58,22 @@ See the official [Marketplace restart behaviour](
 https://contributors.home-assistant.io/marketplace/guides/integrations/#restarts)
 for the exact rules.
 
+### Where do the energy readings appear?
+
+The Marketplace creates an `update.palpulse_historical_energy` entity and may
+show integration information after installation. **Neither is a consumption
+sensor.** PalPulse intentionally creates **external hourly statistics** instead
+of a regular sensor entity. You will not see a separate historical-energy
+sensor under Developer Tools > States.
+
+First select **Add service** in **Settings > Devices & services**, enter the
+Powerpal meter BLE MAC, and verify `esphome.palpulse_record` events appear under
+**Developer Tools > Events**. A complete hour of valid minute records must
+arrive before any hourly statistic can be imported. Inspect the resulting
+`palpulse:powerpal_<mac>_energy` under **Developer Tools > Statistics**.
+Keep the existing Energy dashboard source unchanged until these statistics
+have been independently checked.
+
 The new statistic ID is
 `palpulse:powerpal_<12 lowercase hex digits>_energy`.
 You can find it via **Developer Tools > Statistics**, and it can be selected
@@ -125,8 +141,8 @@ Do not configure both as separate grid-consumption sources.
 - A meter calibration change or conflicting record stops imports until a
   reviewed recovery procedure is performed.
 - The historical statistic starts when the first complete 60-minute period
-  is received after enabling both components. It does **not** magically
-  repair FreshPowerpal's existing incorrect Home Assistant statistics.
+  is received after enabling both components. It does **not** retroactively
+  repair incorrect statistics produced by an earlier firmware installation.
 - UTC timestamps are required; ESPHome does not set the date of normal HA
   sensor states.
 - Events are delivered only if the device is allowed to perform Home
@@ -145,8 +161,9 @@ midnight/DST, reconnection and missing event recovery.
 
 ## Licence and prior work
 
-The companion implementation is new MIT-licensed code using Home Assistant's
-documented Recorder APIs. This repo does **not** import WeekendWarrior1, Pento,
-Gurrier or historical FreshPowerpal BLE transport code. It complements the
-original FreshPowerpal measurement and checkpoint improvements already
-acknowledged by [PalPulse ESPHome](https://github.com/iamhasantan/palpulse-esphome).
+PalPulse Historical Energy is independently authored MIT-licensed code
+using Home Assistant's documented Recorder statistics APIs. It contains no
+third-party Powerpal BLE transport implementation. The ESPHome companion has
+its own [provenance record](https://github.com/iamhasantan/palpulse-esphome/blob/feat/independent-powerpal-ble-foundation/docs/PROVENANCE.md)
+for earlier original engineering work, protocol research and retained on-device
+checkpoint compatibility.
