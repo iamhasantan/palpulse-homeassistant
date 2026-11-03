@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PalPulse historical energy",
+        "description": "Enter the BLE MAC address of your Powerpal meter. The ESPHome node must emit PalPulse historical record events.",
+        "data": {"meter_mac": "Powerpal BLE MAC address"}
+      }
+    },
+    "error": {
+      "invalid_mac": "Enter a valid MAC address, for example AA:BB:CC:DD:EE:FF."
+    },
+    "abort": {
+      "already_configured": "This Powerpal meter is already configured."
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Changelog
+
+## Unreleased
+
+- Build a HACS-installable PalPulse companion integration with UI configuration
+  for a specific Powerpal BLE device.
+- Add strict parsing of native-minute Powerpal events with meter/calibration checks.
+- Require full UTC-hour measurement continuity before importing any energy
+  statistics, and stop at missing or contradictory data.
+- Persist processed times and a deduplicated measurement ledger.
+- Import named external energy statistics through Home Assistant's supported
+  Recorder API with a zero-sum initial baseline.
+- Add standalone accounting tests and GitHub Actions validation.
+
+**Not production ready:** firmware event delivery and end-to-end HA Recorder
+behaviour require hardware and Home Assistant validation.
+
+- Document compatibility with Home Assistant 2026.11's built-in Marketplace,
+  and retain HACS instructions for older Home Assistant releases.

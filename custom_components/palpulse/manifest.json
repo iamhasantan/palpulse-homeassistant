@@ -1,0 +1,23 @@
+{
+  "domain": "palpulse",
+  "name": "PalPulse Historical Energy",
+  "after_dependencies": [
+    "esphome"
+  ],
+  "categories": [
+    "energy.meters_monitoring"
+  ],
+  "codeowners": [
+    "@iamhasantan"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "recorder"
+  ],
+  "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/iamhasantan/palpulse-homeassistant/issues",
+  "requirements": [],
+  "version": "0.1.0b1"
+}
