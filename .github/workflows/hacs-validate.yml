@@ -1,0 +1,32 @@
+name: Validate Home Assistant integration
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: palpulse-validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hacs:
+    name: HACS integration structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main at review
+        with:
+          category: integration
+  hassfest:
+    name: Home Assistant hassfest
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # validated master revision
