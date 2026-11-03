@@ -9,22 +9,30 @@ hours** into Home Assistant Recorder as a **separate, external energy statistic*
 source or select both sources in Home Assistant's Energy dashboard. This importer
 requires an opt-in firmware event sender and real-world validation before use.
 
-## Install with HACS
+## Install through Marketplace / HACS
 
-The repository is public and uses the standard
-`custom_components/palpulse` integration layout.
+The repository uses the standard `custom_components/palpulse` layout and
+`hacs.json` packaging. **Home Assistant 2026.11 and newer include HACS as
+the built-in Marketplace**. The older standalone HACS integration is replaced.
 
-1. In HACS, open the menu and choose **Custom repositories**. Paste
-   `https://github.com/iamhasantan/palpulse-homeassistant` and select **Integration**.
-2. Download **PalPulse Historical Energy** and restart Home Assistant.
+1. On **HA 2026.11+**, open **Settings > Marketplace > Custom repositories**
+   and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
+   **Integration**. On **HA 2026.10 or older**, add the same URL under
+   **HACS > Custom repositories**.
+2. After this beta has been merged to the repo's default branch and passes
+   marketplace validation, install **PalPulse Historical Energy**.
 3. Open **Settings > Devices & services > Add integration > PalPulse Historical
    Energy**. Enter the **Powerpal BLE meter MAC**, not the ESP32 Wi-Fi MAC.
-4. Update your PalPulse ESPHome YAML as described below. Reflash the test ESP32
-   after validating it.
+4. Update your PalPulse ESPHome YAML as described below and rebuild/test it.
 5. In the ESPHome integration options for your proxy, enable **Allow the device
    to perform Home Assistant actions**. This is essential for event delivery.
-6. Listen to the event `esphome.palpulse_record` under Developer Tools to
-   verify traffic before enabling any new energy source.
+6. Listen to `esphome.palpulse_record` under Developer Tools > Events before
+   selecting the new historical statistics source.
+
+**Development status:** the HACS/Marketplace custom repository installs from
+the **default branch**, not this draft PR. Until the PR is merged and repo
+metadata checks pass, use a manual copy of the draft `custom_components/palpulse`
+folder only for isolated testing; do not assume Marketplace installation works.
 
 The new statistic ID is
 `palpulse:powerpal_<12 lowercase hex digits>_energy`.

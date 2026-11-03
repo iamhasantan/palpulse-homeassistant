@@ -14,3 +14,6 @@
 
 **Not production ready:** firmware event delivery and end-to-end HA Recorder
 behaviour require hardware and Home Assistant validation.
+
+- Document compatibility with Home Assistant 2026.11's built-in Marketplace,
+  and retain HACS instructions for older Home Assistant releases.
