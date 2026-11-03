@@ -19,8 +19,8 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
    and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
    **Integration**. On **HA 2026.10 or older**, add the same URL under
    **HACS > Custom repositories**.
-2. After this beta has been merged to the repo's default branch and passes
-   marketplace validation, install **PalPulse Historical Energy**.
+2. Install **PalPulse Historical Energy** after HACS/Marketplace recognises
+   the repository. The beta source is now on `main`.
 3. Open **Settings > Devices & services > Add integration > PalPulse Historical
    Energy**. Enter the **Powerpal BLE meter MAC**, not the ESP32 Wi-Fi MAC.
 4. Update your PalPulse ESPHome YAML as described below and rebuild/test it.
@@ -29,10 +29,12 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
 6. Listen to `esphome.palpulse_record` under Developer Tools > Events before
    selecting the new historical statistics source.
 
-**Development status:** the HACS/Marketplace custom repository installs from
-the **default branch**, not this draft PR. Until the PR is merged and repo
-metadata checks pass, use a manual copy of the draft `custom_components/palpulse`
-folder only for isolated testing; do not assume Marketplace installation works.
+**Beta status:** the source is available on the **default branch**, but
+GitHub repository topics must be set before the Marketplace repository check
+can pass. On GitHub, edit repository details and add topics such as
+`home-assistant`, `hacs`, and `energy-monitoring`. The app is experimental:
+test imports before selecting the external statistic for grid consumption.
+Do not select both the old Powerpal entity and the new external statistic.
 
 The new statistic ID is
 `palpulse:powerpal_<12 lowercase hex digits>_energy`.
