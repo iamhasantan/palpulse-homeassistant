@@ -24,7 +24,8 @@ statistics.statistics_during_period = lambda *args, **kwargs: {}
 backup = types.ModuleType("homeassistant.components.backup")
 notifications = types.ModuleType("homeassistant.components.persistent_notification")
 helpers_recorder = types.ModuleType("homeassistant.helpers.recorder")
-helpers_recorder.get_instance = lambda hass: None
+RECORDER_INSTANCE = [None]
+helpers_recorder.get_instance = lambda hass: RECORDER_INSTANCE[0]
 exceptions = types.ModuleType("homeassistant.exceptions")
 
 
@@ -75,7 +76,7 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.rows = []
         self.recorder = FakeRecorder(self.rows)
-        helpers_recorder.get_instance = lambda hass: self.recorder
+        RECORDER_INSTANCE[0] = self.recorder
         self.hass = types.SimpleNamespace(
             loop=asyncio.get_running_loop(),
             async_add_executor_job=lambda callback: asyncio.to_thread(callback),
