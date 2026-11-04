@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 0.1.0b6 (experimental, opt-in)
+
+### What's Changed
+
+- Add **live PalPulse migration status and progress** entities to the integration,
+  showing current phase, verified rows, total hours, percentage and last error.
+- Keep the migration persistent notification updated as historical hours are
+  verified. Users can monitor long-running backups, imports and verification.
+- Detect previous incomplete or failed migration journals on Home Assistant
+  restart and show **Interrupted**. No writes resume automatically.
+- Add a disabled-by-default **Resume interrupted historical migration** button,
+  and make the existing Import button resume safely when an incomplete journal
+  already exists.
+- Confirm the original Recorder-inclusive backup still exists, validate the
+  original source and unchanged PalPulse cutover, and reconcile all previously
+  committed target hours before writing.
+- Skip every already-present matching hour; only write missing periods, with a
+  Recorder read-back after each 240-row batch. Persist confirmed progress.
+- Fail closed for changed/unknown target rows, different source data, missing
+  backups and conflicting five-minute statistics.
+- Add restart and incomplete-commit regression tests, including a multi-batch
+  import and the Home Assistant progress entity lifecycle.
+- Refuse live integration reloads while a migration operation is running.
+
+### Important
+
+- This is an **opt-in experimental beta**, not a billing-grade migration.
+- If a migration is currently running in an older version, **do not restart
+  Home Assistant to install this beta**. Wait until its existing operation
+  finishes or you have verified its journal and Recorder state.
+- New progress entities become available only after installing this beta and
+  restarting/reloading the integration.
+- The original Powerpal statistics are read-only and existing PalPulse hours
+  at and after the cutover are untouched.
+- Previously committed hours are never blindly imported again. A mismatched
+  data set blocks resume rather than overwriting anything.
+
+
 ## 0.1.0b5 (experimental, opt-in)
 
 ### What's Changed
