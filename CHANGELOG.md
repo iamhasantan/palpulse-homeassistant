@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.1.0b5 (experimental, opt-in)
+
+### What's Changed
+
+- Fix the unhelpful "Legacy cumulative energy decreases" preview error.
+- Preview now reports every reversal in the original Home Assistant hourly
+  cumulative energy sum, including the first ten affected timestamps,
+  previous and new sums, and raw meter states, in HA's local timezone.
+- Send a persistent Home Assistant notification instead of simply rejecting
+  the Preview button with a generic error.
+- Keep Import deliberately blocked if any old cumulative sums decrease.
+  No attempt is made to reinterpret resets, guess readings, or silently
+  modify the original Powerpal history.
+- Reset any earlier preview authorisation when another preview fails.
+- Add regression tests confirming invalid history never creates a backup,
+  never arms an import and never writes to Recorder.
+
+### Important
+
+- This is diagnostic only. It does not automatically repair anomalous
+  legacy energy statistics.
+- The original Powerpal entity, stored history, PalPulse statistic and
+  Energy dashboard configuration are unchanged by Preview.
+- The separate migration and Undo buttons still require a completed,
+  independently verified Home Assistant backup containing Recorder first.
+
 ## 0.1.0b4 (experimental, opt-in)
 
 ### What's Changed
