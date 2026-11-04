@@ -244,40 +244,80 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows, [original_target])
 
     async def test_backup_requires_stored_database_copy(self):
-        original = self.manager
+        """Supervisor job IDs and actual saved backup slugs may differ."""
         settings = types.SimpleNamespace(
             agent_ids=["backup.local"], password=None
         )
+        saved = {}
+        stored_slug = "real-backup-slug-456"
         backup_info = types.SimpleNamespace(
-            database_included=True, homeassistant_included=True,
+            name=None, database_included=True, homeassistant_included=True,
             agents={"backup.local": object()},
         )
+
         async def generate(**kwargs):
             self.assertTrue(kwargs["include_database"])
             self.assertTrue(kwargs["include_homeassistant"])
-            return types.SimpleNamespace(backup_job_id="backed-up")
+            self.assertFalse(kwargs["with_automatic_settings"])
+            self.assertIn("PalPulse test", kwargs["name"])
+            backup_info.name = kwargs["name"]
+            saved[stored_slug] = backup_info
+            # The job ID is NOT the backup slug on Home Assistant OS.
+            return types.SimpleNamespace(backup_job_id="supervisor-job-123")
+
+        async def get_backups():
+            return saved, {}
+
+        async def get_backup(backup_id):
+            self.assertEqual(backup_id, stored_slug)
+            return backup_info, {}
 
         fake_backup_manager = types.SimpleNamespace(
             config=types.SimpleNamespace(
                 data=types.SimpleNamespace(create_backup=settings)
             ),
-            backup_agents={"backup.local": object()},
             local_backup_agents={"backup.local": object()},
             async_create_backup=generate,
-            async_get_backup=AsyncMock(return_value=(backup_info, {})),
+            async_get_backups=get_backups,
+            async_get_backup=AsyncMock(side_effect=get_backup),
         )
         backup.async_get_manager = lambda hass: fake_backup_manager
-        self.assertEqual(await original._backup("test"), "backed-up")
-        fake_backup_manager.async_get_backup.assert_awaited_once_with("backed-up")
-
-        fake_backup_manager.async_get_backup.return_value = (
-            types.SimpleNamespace(
-                database_included=False, homeassistant_included=True,
-                agents={"backup.local": object()},
-            ), {}
+        self.assertEqual(
+            await self.manager._backup("test"), stored_slug
         )
-        with self.assertRaisesRegex(HomeAssistantError, "could not be verified"):
-            await original._backup("test")
+        fake_backup_manager.async_get_backup.assert_awaited_once_with(stored_slug)
+
+        # A backup without the Recorder database cannot authorize a migration.
+        backup_info.database_included = False
+        with self.assertRaisesRegex(HomeAssistantError, "Recorder database"):
+            await self.manager._backup("test")
+
+        backup_info.database_included = True
+        async def missing_stored_backup():
+            return {}, {}
+        fake_backup_manager.async_get_backups = missing_stored_backup
+        with self.assertRaisesRegex(HomeAssistantError, "could not"):
+            await self.manager._backup("test")
+
+    async def test_backup_uses_local_destination_when_none_configured(self):
+        settings = types.SimpleNamespace(agent_ids=[], password=None)
+        captured = []
+        async def create(**kwargs):
+            captured.extend(kwargs["agent_ids"])
+            return types.SimpleNamespace(backup_job_id="job-1")
+        async def list_stored():
+            return {}, {}
+        fake_backup_manager = types.SimpleNamespace(
+            config=types.SimpleNamespace(data=types.SimpleNamespace(
+                create_backup=settings)),
+            local_backup_agents={"backup.local": object()},
+            async_create_backup=create,
+            async_get_backups=list_stored,
+        )
+        backup.async_get_manager = lambda hass: fake_backup_manager
+        with self.assertRaisesRegex(HomeAssistantError, "could not"):
+            await self.manager._backup("test")
+        self.assertEqual(captured, ["backup.local"])
 
 
 if __name__ == "__main__":
