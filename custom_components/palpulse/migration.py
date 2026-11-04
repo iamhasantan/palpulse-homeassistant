@@ -31,6 +31,8 @@ from .migration_plan import (
     MigrationValidationError,
     plan_migration,
     validate_undo,
+    missing_migration_rows,
+    validate_original_snapshot,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,19 +60,89 @@ class LegacyMigration:
         self._preview_expires = 0.0
         self.journal: dict = {}
         self.last_message = "No migration has been previewed"
+        self._stage = "idle"
+        self._completed = 0
+        self._total = 0
+        self._listeners = set()
+
+    @property
+    def progress(self) -> dict:
+        """Human-readable, live and reboot-recoverable migration snapshot."""
+        status = self.journal.get("status", "never_run")
+        total = self._total or self.journal.get("total_rows", len(self.journal.get("rows", [])))
+        done = self._completed
+        percent = round(100 * done / total, 1) if total else None
+        return {
+            "stage": self._stage,
+            "journal_status": status,
+            "completed_rows": done,
+            "total_rows": total,
+            "percent": percent,
+            "resume_available": status in {"prepared", "applying", "failed"},
+            "last_message": self.last_message,
+            "last_error": self.journal.get("last_error"),
+            "pre_migration_backup": self.journal.get("backup_before_migration"),
+            "pre_undo_backup": self.journal.get("backup_before_undo"),
+            "last_updated": self.journal.get("updated_at"),
+        }
+
+    def subscribe(self, callback):
+        """Notify HA entities when a stage or completed row count changes."""
+        self._listeners.add(callback)
+        return lambda: self._listeners.discard(callback)
+
+    def _stage_update(self, stage: str, *, done: int | None = None,
+                      total: int | None = None, message: str | None = None) -> None:
+        self._stage = stage
+        if done is not None:
+            self._completed = done
+        if total is not None:
+            self._total = total
+        if message is not None:
+            self.last_message = message
+        for callback in tuple(self._listeners):
+            callback()
+
+    async def _checkpoint(self, stage: str, completed: int, total: int) -> None:
+        """Durably record progress AFTER confirmed Recorder writes."""
+        self.journal["stage"] = stage
+        self.journal["confirmed_rows"] = completed
+        self.journal["total_rows"] = total
+        self.journal["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await self._save()
+        self._stage_update(stage, done=completed, total=total)
 
     async def async_load(self) -> None:
         """Keep undo state after a Home Assistant restart."""
         self.journal = await self._store.async_load() or {}
-        if self.journal.get("status") in {"prepared", "applying", "undoing", "failed"}:
-            self.last_message = (
-                "Previous migration was interrupted. Review and use Undo. "
-                "Do not run another migration"
+        status = self.journal.get("status")
+        self._total = int(self.journal.get("total_rows", len(self.journal.get("rows", []))))
+        self._completed = int(self.journal.get("confirmed_rows", 0))
+        if status in {"prepared", "applying", "failed"}:
+            self._stage = "interrupted"
+            self._notify(
+                "An earlier migration attempt was detected. "
+                "Recorded progress may be behind actual Recorder writes. "
+                "Press Import or Resume historical migration to safely inspect "
+                "and reconcile existing rows before continuing. Do not use Undo "
+                "unless you intend to remove already imported hours."
             )
-            self._notify(self.last_message)
+        elif status == "undoing":
+            self._stage = "interrupted_undo"
+            self._notify(
+                "An earlier Undo was interrupted. Review the PalPulse target "
+                "statistic and use Undo only after confirming its backup."
+            )
+        elif status == "applied":
+            self._stage = "completed"
+            self.last_message = "Historical migration completed"
+        elif status == "undone":
+            self._stage = "undone"
+            self.last_message = "Historical migration was undone"
 
     def _notify(self, message: str) -> None:
         self.last_message = message
+        self._stage_update(self._stage, message=message)
         persistent_notification.async_create(
             self.hass, message, title="PalPulse experimental history migration",
             notification_id=f"palpulse_migration_{self.entry.entry_id}",
@@ -184,17 +256,24 @@ class LegacyMigration:
         return "\n".join(lines)
 
     async def async_preview(self) -> None:
-        """Preview original data and warn about decreases before explicit import."""
+        """Read-only plan with visible status and a short-lived import arm."""
         async with self._lock:
             self._preview = None
             self._preview_expires = 0.0
             if self.journal.get("status") not in {None, "undone"}:
-                raise HomeAssistantError(
-                    "An earlier migration exists. Undo it first; no data was changed"
+                message = (
+                    "An existing migration was detected. Use Import to inspect "
+                    "and safely resume it, or Undo to remove only migrated rows."
                 )
+                self._stage_update("blocked", message=message)
+                self._notify(message)
+                return
+            self._stage_update("planning", done=0, total=0,
+                               message="Inspecting original and PalPulse statistics")
             try:
                 plan = await self._plan()
-            except MigrationValidationError as err:
+            except Exception as err:
+                self._stage_update("blocked", message=str(err))
                 self._notify(
                     "PREVIEW BLOCKED. " + str(err) +
                     ". No data changed; no backup or import started."
@@ -202,6 +281,7 @@ class LegacyMigration:
                 return
             self._preview = plan
             self._preview_expires = time.monotonic() + PREVIEW_SECONDS
+            self._stage_update("ready", done=0, total=plan.count)
             self._notify(self._summary(plan))
 
     async def _backup(self, reason: str) -> str:
@@ -257,93 +337,217 @@ class LegacyMigration:
     async def _save(self) -> None:
         await self._store.async_save(self.journal)
 
+    async def _verify_prior_backup(self, backup_id: str) -> None:
+        """Require the original Recorder-inclusive backup before resuming."""
+        if not backup_id:
+            raise HomeAssistantError("No verified pre-import backup in journal")
+        manager = backup.async_get_manager(self.hass)
+        original, errors = await manager.async_get_backup(backup_id)
+        if (
+            original is None
+            or not original.database_included
+            or not original.homeassistant_included
+            or not original.agents
+        ):
+            raise HomeAssistantError(
+                f"Original Recorder-inclusive backup {backup_id} is not available: "
+                f"{errors}. Resume blocked."
+            )
+
+    async def _resume_locked(self) -> None:
+        """Reconcile committed rows, then insert ONLY rows still missing."""
+        journal = self.journal
+        if journal.get("status") not in {"prepared", "applying", "failed"}:
+            raise HomeAssistantError("No incomplete historical import to resume")
+        if journal.get("source") != self.source_id or journal.get("target") != self.target_id:
+            raise HomeAssistantError("Stored migration journal belongs to another meter")
+        expected = journal.get("rows")
+        start = int(journal.get("start") or 0)
+        cutover = int(journal.get("cutover") or 0)
+        if not expected or start <= 0 or cutover <= start:
+            raise HomeAssistantError("Incomplete or corrupt migration journal")
+        if expected[0][0] != start or expected[-1][0] >= cutover:
+            raise HomeAssistantError("Migration journal range is invalid")
+        self._stage_update(
+            "reconciling", total=len(expected),
+            message="Verifying existing Recorder rows before any new writes"
+        )
+        # A queued write from an interrupted button press must finish first.
+        await asyncio.wait_for(
+            get_instance(self.hass).async_block_till_done(), timeout=180
+        )
+        await self._verify_prior_backup(journal.get("backup_before_migration"))
+        original = await self._statistics(self.source_id, _utc(start), _utc(cutover))
+        validate_original_snapshot(expected, original)
+        existing = await self._statistics(self.target_id, _utc(start), _utc(cutover))
+        missing = missing_migration_rows(expected, existing, start, cutover)
+        done = len(expected) - len(missing)
+        # An earlier journal counter can lag Recorder when HA exited after
+        # committing a chunk. Recorder is authoritative, not the counter.
+        await self._checkpoint("reconciled", done, len(expected))
+        if missing:
+            five_minute = await self._statistics(
+                self.target_id, _utc(start), _utc(cutover), "5minute"
+            )
+            if five_minute:
+                raise HomeAssistantError(
+                    "PalPulse has five-minute statistics in the import range. "
+                    "Resume blocked to avoid overwriting data."
+                )
+        metadata = {
+            "statistic_id": self.target_id,
+            "source": DOMAIN,
+            "name": STAT_NAME,
+            "unit_of_measurement": "kWh",
+            "unit_class": "energy",
+            "mean_type": StatisticMeanType.NONE,
+            "has_sum": True,
+        }
+        journal["status"] = "applying"
+        journal["last_error"] = None
+        await self._checkpoint("importing", done, len(expected))
+        for index in range(0, len(missing), CHUNK_SIZE):
+            chunk = missing[index:index + CHUNK_SIZE]
+            # Do not resubmit any row already present in Recorder.
+            async_add_external_statistics(self.hass, metadata, [
+                {"start": _utc(ts), "state": state, "sum": summation}
+                for ts, state, summation in chunk
+            ])
+            await asyncio.wait_for(
+                get_instance(self.hass).async_block_till_done(), timeout=180
+            )
+            # Verify this batch was ACTUALLY committed before advancing the
+            # durable row count. Crashes between DB and journal commits are safe.
+            self._stage_update("verifying", message=(
+                f"Checking imported batch {index // CHUNK_SIZE + 1}"
+            ))
+            batch_rows = await self._statistics(
+                self.target_id, _utc(chunk[0][0]), _utc(chunk[-1][0] + 3600)
+            )
+            still_missing = missing_migration_rows(
+                expected, batch_rows, start, cutover
+            )
+            missing_times = {row[0] for row in still_missing}
+            if any(row[0] in missing_times for row in chunk):
+                raise HomeAssistantError(
+                    "Recorder did not commit all rows in the latest batch. "
+                    "Import paused for safe reconciliation."
+                )
+            done += len(chunk)
+            await self._checkpoint("importing", done, len(expected))
+        self._stage_update(
+            "verifying", done=done, total=len(expected),
+            message="Verifying every historical row against the saved journal",
+        )
+        final = await self._statistics(self.target_id, _utc(start), _utc(cutover))
+        if missing_migration_rows(expected, final, start, cutover):
+            raise HomeAssistantError(
+                "Final verification found missing migrated hours. Resume required."
+            )
+        journal["status"] = "applied"
+        journal["last_error"] = None
+        await self._checkpoint("completed", len(expected), len(expected))
+        self._preview = None
+        self._preview_expires = 0.0
+        self._notify(
+            f"Historical import complete: {len(expected)} hourly records "
+            f"verified in {self.target_id}. The original source remains "
+            f"untouched. Backup: {journal['backup_before_migration']}. "
+            "Undo remains available."
+        )
+
     async def async_migrate(self) -> None:
-        """Write strictly before the first existing PalPulse hour."""
+        """Start a planned import, or safely resume an interrupted attempt."""
         async with self._lock:
-            if self.journal.get("status") not in {None, "undone"}:
-                raise HomeAssistantError("Migration already exists. Use Undo")
-            preview = self._preview
-            if preview is None or time.monotonic() > self._preview_expires:
-                raise HomeAssistantError(
-                    "Use Preview migration first. Preview expires after 10 minutes"
-                )
-            current = await self._plan()
-            if current.digest != preview.digest:
-                self._preview = None
-                raise HomeAssistantError(
-                    "Legacy records or cutover changed. Preview again"
-                )
-            # Fail closed if there are already PalPulse values in the write range.
-            if await self._statistics(
-                self.target_id, _utc(current.first_hour), _utc(current.cutover)
-            ):
-                raise HomeAssistantError("Target already has historical rows in range")
-            # We never silently overwrite existing five-minute PalPulse records.
-            if await self._statistics(
-                self.target_id, _utc(current.first_hour),
-                _utc(current.cutover), "5minute"
-            ):
-                raise HomeAssistantError("Target has short-term rows. Import blocked")
-
-            backup_id = await self._backup("before migration")
-            self.journal = {
-                "version": 1,
-                "status": "prepared",
-                "source": self.source_id,
-                "target": self.target_id,
-                "start": current.first_hour,
-                "cutover": current.cutover,
-                "digest": current.digest,
-                "rows": [list(row) for row in current.hours],
-                "backup_before_migration": backup_id,
-                "backup_before_undo": None,
-            }
-            # Durable recovery journal must exist BEFORE the first Recorder write.
-            await self._save()
-            metadata = {
-                "statistic_id": self.target_id,
-                "source": DOMAIN,
-                "name": STAT_NAME,
-                "unit_of_measurement": "kWh",
-                "unit_class": "energy",
-                "mean_type": StatisticMeanType.NONE,
-                "has_sum": True,
-            }
-            self.journal["status"] = "applying"
-            await self._save()
             try:
-                for i in range(0, current.count, CHUNK_SIZE):
-                    segment = current.hours[i:i + CHUNK_SIZE]
-                    async_add_external_statistics(self.hass, metadata, [
-                        {"start": _utc(ts), "state": state, "sum": summation}
-                        for ts, state, summation in segment
-                    ])
-                    await get_instance(self.hass).async_block_till_done()
-
-                present = await self._statistics(
-                    self.target_id, _utc(current.first_hour), _utc(current.cutover)
+                if self.journal.get("status") in {"prepared", "applying", "failed"}:
+                    await self._resume_locked()
+                    return
+                if self.journal.get("status") not in {None, "undone"}:
+                    raise HomeAssistantError(
+                        "Migration already completed. Use Undo before starting another"
+                    )
+                preview = self._preview
+                if preview is None or time.monotonic() > self._preview_expires:
+                    raise HomeAssistantError(
+                        "Use Preview migration first. Preview expires after 10 minutes"
+                    )
+                self._stage_update(
+                    "planning", done=0, total=preview.count,
+                    message="Rechecking source and cutoff before making any changes",
                 )
-                validate_undo(self.journal["rows"], present,
-                              current.first_hour, current.cutover)
-                if len(present) != current.count:
-                    raise HomeAssistantError("Recorder did not write every old hour")
-            except Exception:
-                self.journal["status"] = "failed"
-                await self._save()
+                current = await self._plan()
+                if current.digest != preview.digest:
+                    self._preview = None
+                    raise HomeAssistantError(
+                        "Source statistics or cutover changed. Preview again"
+                    )
+                if await self._statistics(
+                    self.target_id, _utc(current.first_hour), _utc(current.cutover)
+                ):
+                    raise HomeAssistantError(
+                        "Target already has historical rows in import range"
+                    )
+                if await self._statistics(
+                    self.target_id, _utc(current.first_hour),
+                    _utc(current.cutover), "5minute"
+                ):
+                    raise HomeAssistantError(
+                        "Target already has short-term data in range"
+                    )
+                self._stage_update(
+                    "backing_up", done=0, total=current.count,
+                    message="Creating and verifying a Recorder-inclusive HA backup",
+                )
                 self._notify(
-                    "Migration incomplete. Original sensor was not touched. "
-                    "Use Undo to remove any inserted pre-cutover rows. "
-                    f"Backup: {backup_id}"
+                    f"Historical migration started. Backing up Home Assistant "
+                    f"including Recorder before importing {current.count} hours. "
+                    "Watch the PalPulse Migration Status and Progress entities."
+                )
+                backup_id = await self._backup("before migration")
+                self.journal = {
+                    "version": 2,
+                    "status": "prepared",
+                    "stage": "prepared",
+                    "source": self.source_id,
+                    "target": self.target_id,
+                    "start": current.first_hour,
+                    "cutover": current.cutover,
+                    "digest": current.digest,
+                    "rows": [list(row) for row in current.hours],
+                    "confirmed_rows": 0,
+                    "total_rows": current.count,
+                    "backup_before_migration": backup_id,
+                    "backup_before_undo": None,
+                }
+                await self._checkpoint("prepared", 0, current.count)
+                # The journal is now durable BEFORE any statistic is changed.
+                await self._resume_locked()
+            except Exception as err:
+                self._stage_update("failed", message=str(err))
+                if self.journal.get("status") in {"prepared", "applying", "failed"}:
+                    self.journal["status"] = "failed"
+                    self.journal["last_error"] = str(err)
+                    self.journal["stage"] = "failed"
+                    await self._save()
+                self._notify(
+                    "Historical migration stopped. " + str(err) +
+                    ". Original source is untouched. If a backup and journal "
+                    "exist, press Import again to reconcile and safely resume. "
+                    "Inspect progress entities before retrying."
                 )
                 raise
-            self.journal["status"] = "applied"
-            await self._save()
-            self._preview = None
-            self._notify(
-                f"Imported {current.count} legacy hours into {self.target_id}. "
-                f"Original sensor untouched. Pre-migration backup: {backup_id}. "
-                "Undo available via the Undo historical migration button"
-            )
+
+    async def async_resume(self) -> None:
+        """Explicit resume button; never starts a new unpreviewed migration."""
+        async with self._lock:
+            try:
+                await self._resume_locked()
+            except Exception as err:
+                self._stage_update("blocked", message=str(err))
+                self._notify("Resume blocked: " + str(err) +
+                             ". No existing rows were overwritten.")
+                raise
 
     async def async_undo(self) -> None:
         """Remove ONLY journalled target hours before cutover, with a new backup."""
