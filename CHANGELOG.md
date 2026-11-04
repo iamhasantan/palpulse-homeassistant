@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.1.0b4 (experimental, opt-in)
+
+### What's Changed
+
+- Add disabled-by-default Home Assistant buttons to preview, migrate, and undo
+  historical Powerpal totals in the new PalPulse statistic.
+- Copy legacy hourly readings only up to (not including) the first existing
+  PalPulse data point. Never overwrite the new statistic's existing hours.
+- Shift old cumulative sums to join the new statistic's zero-sum baseline.
+- Require and verify a completed Home Assistant backup including the Recorder
+  database before the first import and again before Undo.
+- Keep the original Powerpal sensor and all its historical data untouched.
+- Store a durable undo journal. Undo clears only the rows this migration
+  inserted, using Home Assistant's time-range Recorder API.
+- Reject changed, overlapping or invalid data rather than guessing or deleting.
+
+### Important
+
+- This is an **experimental beta**. Do not install it on production without a
+  verified independent backup and a review of the migration preview.
+- The old history may contain existing catch-up spikes. Those are copied as
+  recorded, not silently rewritten.
+- If your original source has gaps, PalPulse does not invent missing readings.
+- Reversing the migration is a button action, not a full HA restore.
+
 ## 0.1.0b3
 
 ### What's Changed
