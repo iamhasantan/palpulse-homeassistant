@@ -63,13 +63,18 @@ class MigrationPlanTests(unittest.TestCase):
         self.assertIn("Migration blocked", str(caught.exception))
 
     def test_diagnose_all_decreases_not_only_first(self):
-        self.old.insert(1, row(CUTOVER - 3 * HOUR + HOUR // 2, 30.2, 4.0))
-        self.old[3]["sum"] = 3.0
-        # Diagnose function deliberately detects every reversal in source rows.
-        rows = migration._read_rows(self.old, "Original")
+        old = [
+            row(CUTOVER - 5 * HOUR, 29.0, 9.0),
+            row(CUTOVER - 4 * HOUR, 29.2, 7.0),
+            row(CUTOVER - 3 * HOUR, 30.0, 9.5),
+            row(CUTOVER - 2 * HOUR, 30.8, 5.8),
+            row(CUTOVER - HOUR, 31.4, 6.4),
+        ]
+        rows = migration._read_rows(old, "Original")
         drops = migration.diagnose_decreases(rows)
         self.assertEqual(len(drops), 2)
-        self.assertEqual(drops[0].later_hour, CUTOVER - 3 * HOUR + HOUR // 2)
+        self.assertEqual(drops[0].later_hour, CUTOVER - 4 * HOUR)
+        self.assertEqual(drops[1].later_hour, CUTOVER - 2 * HOUR)
 
     def test_rejects_changed_or_nonbaseline_cutover(self):
         self.new[0]["sum"] = 0.5
