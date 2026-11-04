@@ -60,7 +60,7 @@ def callback(func):
 
 
 ha_core.callback = callback
-ha_const.Platform = types.SimpleNamespace(BUTTON="button")
+ha_const.Platform = types.SimpleNamespace(BUTTON="button", SENSOR="sensor")
 
 
 class FakeStore:
@@ -126,7 +126,7 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             return lambda: None
 
         async def forward_platforms(entry, platforms):
-            self.assertEqual(platforms, ["button"])
+            self.assertEqual(platforms, ["button", "sensor"])
 
         hass = types.SimpleNamespace(
             bus=types.SimpleNamespace(async_listen=listen),

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   experimental-release:
-    name: Test and publish opt-in 0.1.0b5 pre-release
+    name: Test and publish opt-in 0.1.0b6 pre-release
     if: github.ref == 'refs/heads/experiment/legacy-history-migration-undo'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -40,8 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(python -c 'import json; print(json.load(open("custom_components/palpulse/manifest.json"))["version"])')"
-          if [[ "$version" != "0.1.0b5" ]]; then
-            echo "::error::Experimental publish workflow only permits 0.1.0b5"
+          if [[ "$version" != "0.1.0b6" ]]; then
+            echo "::error::Experimental publish workflow only permits 0.1.0b6"
             exit 1
           fi
           awk -v tag="$version" '
@@ -56,7 +56,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="0.1.0b5"
+          tag="0.1.0b6"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Existing experimental tag $tag is immutable. Refusing to move it."
             exit 1
@@ -64,7 +64,7 @@ jobs:
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "PalPulse for Home Assistant $tag - EXPERIMENTAL history migration diagnostics and Undo" \
+            --title "PalPulse for Home Assistant $tag - EXPERIMENTAL history migration progress and safe resume" \
             --notes-file "$RUNNER_TEMP/experimental-notes.md" \
             --prerelease
           actual="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"

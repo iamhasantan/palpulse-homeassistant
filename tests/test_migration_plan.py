@@ -49,18 +49,19 @@ class MigrationPlanTests(unittest.TestCase):
         b = migration.plan_migration(list(reversed(self.old)), self.new)
         self.assertEqual(a.digest, b.digest)
 
-    def test_rejects_negative_legacy_consumption_with_precise_diagnostic(self):
-        self.old[2]["sum"] = 0.1
-        with self.assertRaises(migration.LegacyDecreaseError) as caught:
-            migration.plan_migration(self.old, self.new)
-        issue = caught.exception.decreases[0]
-        self.assertEqual(issue.earlier_hour, CUTOVER - 2 * HOUR)
-        self.assertEqual(issue.later_hour, CUTOVER - HOUR)
-        self.assertAlmostEqual(issue.before_sum, 5.8)
+    def test_preserves_negative_legacy_deltas_with_precise_diagnostic(self):
+        # Small historical reversal that is later recovered by cutover. A
+        # reversal which makes earlier adjusted sums exceed cutover is unsafe.
+        self.old[1]["sum"] = 0.1
+        plan = migration.plan_migration(self.old, self.new)
+        self.assertEqual(len(plan.decreases), 1)
+        issue = plan.decreases[0]
+        self.assertEqual(issue.earlier_hour, CUTOVER - 3 * HOUR)
+        self.assertEqual(issue.later_hour, CUTOVER - 2 * HOUR)
+        self.assertAlmostEqual(issue.before_sum, 5.0)
         self.assertAlmostEqual(issue.after_sum, 0.1)
-        self.assertAlmostEqual(issue.difference, -5.7)
-        self.assertIn("+00:00", str(caught.exception))
-        self.assertIn("Migration blocked", str(caught.exception))
+        self.assertAlmostEqual(issue.difference, -4.9)
+        self.assertAlmostEqual(plan.hours[-1][2], 0.0)
 
     def test_diagnose_all_decreases_not_only_first(self):
         old = [

@@ -47,13 +47,31 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     unsub = hass.bus.async_listen(EVENT_TYPE, _receive)
     entry.async_on_unload(unsub)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = importer
-    await hass.config_entries.async_forward_entry_setups(entry, [Platform.BUTTON])
+    # Create one shared migration manager before either entity platform starts.
+    # The progress sensors and buttons both observe the same live job.
+    from .migration import LegacyMigration
+
+    manager = LegacyMigration(hass, entry, importer.statistic_id)
+    await manager.async_load()
+    hass.data.setdefault(f"{DOMAIN}_migration", {})[entry.entry_id] = manager
+    await hass.config_entries.async_forward_entry_setups(
+        entry, [Platform.BUTTON, Platform.SENSOR]
+    )
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
-    """Stop receiving data and store pending measurements."""
-    if not await hass.config_entries.async_unload_platforms(entry, [Platform.BUTTON]):
+    """Avoid unloading a running migration or losing the active progress UI."""
+    manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry.entry_id)
+    if manager is not None and manager.busy:
+        _LOGGER.warning(
+            "PalPulse integration reload refused while historical migration "
+            "is active. Monitor migration progress before restarting Home Assistant"
+        )
+        return False
+    if not await hass.config_entries.async_unload_platforms(
+        entry, [Platform.BUTTON, Platform.SENSOR]
+    ):
         return False
     hass.data.get(f"{DOMAIN}_migration", {}).pop(entry.entry_id, None)
     importer = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)

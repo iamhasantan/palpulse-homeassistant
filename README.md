@@ -40,17 +40,21 @@ experimental integration: validate timestamped imports before selecting the
 external statistic for grid consumption. Never select both the old Powerpal
 entity and the new external statistic.
 
-### Experimental migration and Undo (0.1.0b4 and 0.1.0b5)
+### Experimental migration and Undo (0.1.0b4 through 0.1.0b6)
 
-**New in 0.1.0b5:** If the Preview button previously failed with
+**New in 0.1.0b6:** Visual status and percentage are shown while importing,
+with a safe explicit resume path after an interrupted or failed import. See
+**Visual migration status, progress and interruption recovery** below.
+Never restart an actively running older migration solely to install this update.
+
+**Earlier 0.1.0b5 behaviour:** If the Preview button previously failed with
 `Legacy cumulative energy decreases`, it now completes a read-only
 diagnostic. Check **Notifications** for each affected hour (first ten shown,
 plus total count), the previous/current Home Assistant cumulative sums,
-and the original sensor states. **Import remains disabled** while any
-legacy cumulative sum reverses. A negative sum change may represent a
-legitimate reset, a repaired statistic, or a bad reading. PalPulse cannot
-distinguish them automatically. No backups or writes run during Preview,
-and the original sensor and historical data remain untouched.
+and the original sensor states. The preview warns about historical decreases and preserves their recorded
+values, subject to the migration planner's strict baseline and consistency
+checks. Some negative steps remain unsafe and block import. No backups or
+writes run during Preview; the original history remains untouched.
 
 
 
@@ -107,6 +111,60 @@ stays on disk and the Undo button can remove the subset that was inserted.
 Undo refuses to clear a range containing unfamiliar or altered statistics.
 The backup identifiers are displayed in the buttons' attributes. Never
 delete the source sensor or manually clear its statistics.
+
+### Visual migration status, progress and interruption recovery (next experimental beta)
+
+PalPulse now exposes two **enabled-by-default** diagnostic entities under
+**Settings > Devices & services > PalPulse for Home Assistant > Entities**:
+
+- **PalPulse migration status**, with stages such as Planning, Ready, Backing up,
+  Reconciling, Importing, Verifying, Completed, Interrupted, Blocked and Failed.
+- **PalPulse migration progress**, a numeric percentage from 0 to 100 when the
+  number of planned hours is known. Its attributes include
+  `completed_rows`, `total_rows`, `progress_percent`, `resume_available`,
+  `last_message`, `last_error` and the verified backup identifier.
+
+You can place **PalPulse migration progress** on a Home Assistant **Gauge**
+dashboard card for an optional graphical progress bar. The status entity makes
+the current action visible without opening logs or guessing whether the backup
+is running. The existing persistent migration notification is updated after
+approximately each 10% of verified hourly records.
+
+**Resuming an interrupted import:**
+
+1. If HA restarts or the old job fails after preparing its journal, the status
+   entity shows **Interrupted** (or **Failed**) and marks `resume_available`
+   true. The journal's last saved count is only an estimate: it may lag writes
+   already committed to Recorder.
+2. **Do not press Preview, Undo, or Import repeatedly.** Allow the previous
+   action to stop, then press **Resume interrupted historical migration**,
+   which is disabled by default and must be enabled in the Entities view.
+   Alternatively, the existing **Import old Powerpal history** button now
+   detects an incomplete journal and performs the same safe resume path.
+3. PalPulse first waits for pending Recorder work, verifies the original
+   Recorder-inclusive backup, validates the original source statistic and
+   unmodified PalPulse cutover baseline, and reads the actual pre-cutover
+   target rows from Recorder.
+4. Every existing target row must match the saved import plan. Unknown or
+   altered rows, a missing backup, a changed source, or conflicting short-term
+   statistics **block** the resume. The integration does **not** overwrite them.
+5. Only missing, pre-cutover rows are submitted, in batches of up to 240,
+   then read back and verified. The confirmed count and phase are saved to
+   the durable journal after each successful batch. A crash after a Recorder
+   commit but before the journal update is handled by reconciling Recorder
+   again rather than importing the same hour twice.
+6. After all rows are verified, the stage becomes **Completed**. The original
+   source and all existing PalPulse hours at/after the cutover are left intact.
+
+**Safety:** The companion never resumes automatically during Home Assistant
+startup, and it never silently ignores mismatched data. Resume is an explicit,
+human-triggered operation. The existing Undo button still targets only the
+journalled hours and makes a separate Recorder-inclusive backup.
+
+If an **older** migration is currently running, **do not restart Home Assistant
+just to install the progress update**. Existing code cannot retrospectively
+report progress for an already-running job. Let it finish, or establish its
+journal and Recorder state before changing versions.
 
 ### Marketplace update procedure (0.1.0b3 and later)
 
