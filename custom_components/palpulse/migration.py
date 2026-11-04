@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import time
 
@@ -26,6 +27,7 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN, STAT_NAME
 from .migration_plan import (
     MigrationPlan,
+    LegacyDecreaseError,
     MigrationValidationError,
     plan_migration,
     validate_undo,
@@ -133,17 +135,64 @@ class LegacyMigration:
             "Undo makes another backup before removing only the imported hours."
         )
 
+    def _decrease_diagnostic(self, error: LegacyDecreaseError) -> str:
+        """Explain the blocked source history without authorizing any writes."""
+        try:
+            time_zone = ZoneInfo(self.hass.config.time_zone)
+            zone_label = self.hass.config.time_zone
+        except (AttributeError, ZoneInfoNotFoundError, TypeError, KeyError):
+            time_zone = timezone.utc
+            zone_label = "UTC"
+        lines = [
+            "PREVIEW BLOCKED. Original Home Assistant Powerpal hourly cumulative "
+            f"sum decreases {len(error.decreases)} time(s) before PalPulse's "
+            "first data point.",
+            "",
+            f"First {min(10, len(error.decreases))} affected hours "
+            f"({zone_label}):",
+        ]
+        for item in error.decreases[:10]:
+            hour = datetime.fromtimestamp(
+                item.later_hour, timezone.utc
+            ).astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
+            lines.append(
+                f"- {hour}: cumulative sum {item.before_sum:.5f} -> "
+                f"{item.after_sum:.5f} kWh "
+                f"(change {item.difference:+.5f} kWh); "
+                f"raw meter state {item.before_state:.5f} -> "
+                f"{item.after_state:.5f} kWh"
+            )
+        lines.extend([
+            "",
+            "These could be legitimate counter resets or bad/corrected "
+            "Recorder rows. The integration cannot safely decide which. "
+            "Original source readings have NOT been changed.",
+            "No migration or backup was started by this read-only preview. "
+            "Import remains blocked. Do not use manual Adjust statistic "
+            "controls until the source data has been independently reviewed.",
+        ])
+        return "\n".join(lines)
+
     async def async_preview(self) -> None:
-        """Read-only preview must precede migration."""
+        """Report source issues without silently loosening import checks."""
         async with self._lock:
+            self._preview = None
+            self._preview_expires = 0.0
             if self.journal.get("status") not in {None, "undone"}:
                 raise HomeAssistantError(
                     "An earlier migration exists. Undo it first; no data was changed"
                 )
             try:
                 plan = await self._plan()
+            except LegacyDecreaseError as err:
+                self._notify(self._decrease_diagnostic(err))
+                return
             except MigrationValidationError as err:
-                raise HomeAssistantError(str(err)) from err
+                self._notify(
+                    "PREVIEW BLOCKED. " + str(err) +
+                    ". No data changed; no backup or import started."
+                )
+                return
             self._preview = plan
             self._preview_expires = time.monotonic() + PREVIEW_SECONDS
             self._notify(self._summary(plan))
