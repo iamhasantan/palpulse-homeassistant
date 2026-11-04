@@ -59,7 +59,7 @@ class MigrationPlanTests(unittest.TestCase):
         self.assertAlmostEqual(issue.before_sum, 5.8)
         self.assertAlmostEqual(issue.after_sum, 0.1)
         self.assertAlmostEqual(issue.difference, -5.7)
-        self.assertIn("UTC", str(caught.exception))
+        self.assertIn("+00:00", str(caught.exception))
         self.assertIn("Migration blocked", str(caught.exception))
 
     def test_diagnose_all_decreases_not_only_first(self):
