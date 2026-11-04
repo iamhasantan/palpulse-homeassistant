@@ -65,6 +65,7 @@ class LegacyMigration:
         self._completed = 0
         self._total = 0
         self._listeners = set()
+        self._last_error: str | None = None
         self._last_notified_bucket = -1
 
     @property
@@ -82,7 +83,7 @@ class LegacyMigration:
             "percent": percent,
             "resume_available": status in {"prepared", "applying", "failed"},
             "last_message": self.last_message,
-            "last_error": self.journal.get("last_error"),
+            "last_error": self._last_error or self.journal.get("last_error"),
             "pre_migration_backup": self.journal.get("backup_before_migration"),
             "pre_undo_backup": self.journal.get("backup_before_undo"),
             "last_updated": self.journal.get("updated_at"),
@@ -590,6 +591,7 @@ class LegacyMigration:
                 # The journal is now durable BEFORE any statistic is changed.
                 await self._resume_locked()
             except Exception as err:
+                self._last_error = str(err)
                 self._stage_update("failed", message=str(err))
                 if self.journal.get("status") in {"prepared", "applying", "failed"}:
                     self.journal["status"] = "failed"
