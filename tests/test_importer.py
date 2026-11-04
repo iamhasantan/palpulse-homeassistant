@@ -52,6 +52,15 @@ ha_core.Event = type("Event", (), {})
 ha_core.HomeAssistant = type("HomeAssistant", (), {})
 
 
+def callback(func):
+    """Model Home Assistant's event-loop-safe callback annotation."""
+    func.__ha_callback = True
+    return func
+
+
+ha_core.callback = callback
+
+
 class FakeStore:
     VALUES = {}
 
@@ -103,6 +112,37 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 await self.importer.async_receive(
                     record_event(start + minute * 60, 10, starting_pulses + (minute + 1) * 10)
                 )
+
+    async def test_event_listener_schedules_records_on_event_loop(self):
+        """ESPHome events must use an event-loop callback, not an executor callback."""
+        listeners = []
+
+        def listen(event_type, handler):
+            self.assertEqual(event_type, "esphome.palpulse_record")
+            self.assertTrue(getattr(handler, "__ha_callback", False))
+            listeners.append(handler)
+            return lambda: None
+
+        hass = types.SimpleNamespace(
+            bus=types.SimpleNamespace(async_listen=listen),
+            data={},
+            async_create_task=asyncio.create_task,
+        )
+        entry = types.SimpleNamespace(
+            data={"meter_mac": MAC},
+            entry_id="thread-safe-test",
+            async_on_unload=lambda _: None,
+        )
+        self.assertTrue(await palpulse.async_setup_entry(hass, entry))
+        self.assertEqual(len(listeners), 1)
+
+        event = types.SimpleNamespace(data=record_event(BASE, 10, 40010))
+        with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+            listeners[0](event)
+            await asyncio.sleep(0)
+        self.assertIn(
+            BASE, hass.data["palpulse"][entry.entry_id]._records
+        )
 
     async def test_hourly_import_and_duplicate(self):
         await self.feed_hour(BASE, 40000)
