@@ -59,7 +59,7 @@ jobs:
             echo "::error::No matching release notes found in CHANGELOG.md for $TAG"
             exit 1
           fi
-      - name: Publish pre-release on GitHub
+      - name: Publish versioned release on GitHub
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
