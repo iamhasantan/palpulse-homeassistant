@@ -75,4 +75,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "PalPulse Historical Energy $TAG" \
             --notes-file "$RUNNER_TEMP/palpulse-release-notes.md" \
-            --prerelease
+            --latest
