@@ -16,6 +16,7 @@ import time
 from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.const import Platform
 from homeassistant.helpers.storage import Store
 
 from .const import CONF_METER_MAC, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
@@ -46,11 +47,15 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     unsub = hass.bus.async_listen(EVENT_TYPE, _receive)
     entry.async_on_unload(unsub)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = importer
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform.BUTTON])
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     """Stop receiving data and store pending measurements."""
+    if not await hass.config_entries.async_unload_platforms(entry, [Platform.BUTTON]):
+        return False
+    hass.data.get(f"{DOMAIN}_migration", {}).pop(entry.entry_id, None)
     importer = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if importer:
         await importer.async_flush()
