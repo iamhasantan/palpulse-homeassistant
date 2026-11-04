@@ -1,4 +1,4 @@
-name: Publish PalPulse beta release
+name: Publish PalPulse Marketplace release
 
 on:
   push:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Validate and publish versioned beta
+    name: Validate and publish versioned release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -59,7 +59,7 @@ jobs:
             echo "::error::No matching release notes found in CHANGELOG.md for $TAG"
             exit 1
           fi
-      - name: Publish pre-release on GitHub
+      - name: Publish versioned release on GitHub
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,9 +70,16 @@ jobs:
             echo "Release $TAG already exists; leaving it unchanged"
             exit 0
           fi
+          # Marketplace ignores GitHub pre-releases unless explicitly opted in.
+          # Keep the bN version and conspicuous beta label, but publish a normal
+          # GitHub release so custom-repository updates use version tags.
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "PalPulse Historical Energy $TAG" \
+            --title "PalPulse Historical Energy $TAG (experimental beta)" \
             --notes-file "$RUNNER_TEMP/palpulse-release-notes.md" \
-            --prerelease
+            --latest
+          if [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" != "false" ]]; then
+            echo "::error::Release is marked as pre-release and will not be used for automatic Marketplace updates"
+            exit 1
+          fi

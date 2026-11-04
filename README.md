@@ -40,27 +40,34 @@ experimental integration: validate timestamped imports before selecting the
 external statistic for grid consumption. Never select both the old Powerpal
 entity and the new external statistic.
 
-### Update-test procedure for 0.1.0b2
+### Marketplace update procedure (0.1.0b3 and later)
 
-The beta is published as a GitHub **pre-release** with tag `0.1.0b2`,
-matching the integration manifest. A tag alone is not a Marketplace release.
+Starting with `0.1.0b3`, PalPulse uses a **regular GitHub release** so
+Marketplace's normal update detection uses the version tag rather than the
+latest commit hash. The version and release title still clearly identify
+**experimental beta** software. The earlier `0.1.0b2` GitHub release is a
+pre-release, which is why Marketplace displayed a commit hash instead.
 
-1. In **Settings > Marketplace**, open **PalPulse Historical Energy** and
-   enable its **Pre-release** option in the repository options. Leave the
-   existing configured Powerpal meter untouched.
-2. Use the repository's **Update information / Check for updates** action
-   if available. GitHub custom-repository refresh and update discovery are
-   not necessarily immediate.
-3. When `0.1.0b2` is offered in **Settings > Updates**, review the release
-   notes and install it through Home Assistant (not by copying files).
-4. Follow the restart/Repairs notice and restart Home Assistant. This update
-   changes Python code; restarting is required before the new listener runs.
-5. Confirm no `palpulse` thread-safety exceptions occur in **Settings >
-   System > Logs**, and verify ESPHome `esphome.palpulse_record` events
-   arrive. A complete valid UTC hour is needed before the external statistic
-   `palpulse:powerpal_<mac>_energy` is created.
-6. Do not add the new statistic alongside your existing Powerpal source in
-   the Energy dashboard. Preserve the original source until comparisons pass.
+1. Keep the PalPulse meter configured and leave the ESP32 firmware unchanged.
+2. Open **Settings > Marketplace > PalPulse Historical Energy**.
+3. Refresh its information if that control is available. Custom GitHub
+   repositories can take time to update their version metadata.
+4. Confirm **Available** shows `0.1.0b3`, not a seven-character commit hash.
+   Inspect its release notes, then click **Update**.
+5. Confirm **Installed** shows `0.1.0b3`, and the update is no longer offered.
+6. Follow Home Assistant's update/Repairs notice and restart Home Assistant if
+   prompted. The updated release is metadata-only, but restarting is a
+   useful validation of the end-to-end Marketplace update procedure.
+7. Verify `esphome.palpulse_record` events still arrive and that no
+   PalPulse integration errors appear in Core logs. Do not change the
+   existing Energy dashboard source while validating historical statistics.
+
+**Version policy:** Because automatic update discovery excludes GitHub
+pre-releases by default for custom repositories, PalPulse test releases are
+published in the normal GitHub release channel with `bN` beta version
+numbers and prominent beta warnings. This deliberately makes experimental
+updates discoverable to everyone who installs this custom repository.
+Use a pre-release only when intentionally requiring a manual version choice.
 
 **Current limitation:** Records rejected by the previous thread-safety bug
 were not added to the importer ledger. This version cannot restore them
