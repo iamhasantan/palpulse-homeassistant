@@ -186,3 +186,51 @@ def validate_undo(expected: list[list], actual: list[dict],
             raise MigrationValidationError(
                 "Imported row was changed since migration. Undo is blocked"
             )
+
+
+def missing_migration_rows(
+    expected: list[list] | tuple[tuple[int, float, float], ...],
+    actual: list[dict],
+    start: int,
+    end: int,
+) -> tuple[tuple[int, float, float], ...]:
+    """Return ONLY absent rows after validating all existing target statistics.
+
+    A crash may occur after Recorder committed a batch but before the journal
+    was updated. We trust the real Recorder rows, never a stale row counter.
+    Unknown, duplicate or modified rows must fail closed.
+    """
+    validate_undo(expected, actual, start, end)
+    actual_timestamps = [int(row["start"]) for row in actual]
+    if len(actual_timestamps) != len(set(actual_timestamps)):
+        raise MigrationValidationError("Duplicate target hour detected; resume blocked")
+    written = set(actual_timestamps)
+    return tuple(
+        (int(ts), float(state), float(summation))
+        for ts, state, summation in expected if int(ts) not in written
+    )
+
+
+def validate_original_snapshot(expected: list[list], source_rows: list[dict]) -> None:
+    """Ensure the read-only source still represents the journal's planned data.
+
+    The planned sums differ from the original by a single offset. Modifications
+    to individual historical intervals or meter states invalidate the plan.
+    """
+    source = _read_rows(source_rows, "Original Powerpal")
+    if len(expected) != len(source):
+        raise MigrationValidationError(
+            "Original source statistics count changed since migration; resume blocked"
+        )
+    if not source:
+        raise MigrationValidationError("Original source statistics are empty")
+    offset = float(expected[0][2]) - source[0][2]
+    for (planned_time, planned_state, planned_sum), (ts, state, summation) in zip(expected, source):
+        if (
+            int(planned_time) != ts
+            or not math.isclose(float(planned_state), state, rel_tol=0, abs_tol=1e-5)
+            or not math.isclose(float(planned_sum), summation + offset, rel_tol=0, abs_tol=1e-5)
+        ):
+            raise MigrationValidationError(
+                f"Original Powerpal data changed at UTC hour {ts}; resume blocked"
+            )
