@@ -112,6 +112,32 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.manager._statistics = read
         self.manager._plan = AsyncMock(return_value=self.plan)
 
+    async def test_bad_legacy_sum_preview_reports_detail_without_writes(self):
+        decrease = plan_module.LegacyDecrease(
+            earlier_hour=CUTOVER - 2 * HOUR,
+            later_hour=CUTOVER - HOUR,
+            before_sum=8.0,
+            after_sum=3.5,
+            before_state=30.0,
+            after_state=31.0,
+        )
+        self.manager._plan = AsyncMock(
+            side_effect=plan_module.LegacyDecreaseError((decrease,))
+        )
+        self.manager._backup = AsyncMock()
+        await self.manager.async_preview()
+        self.assertIsNone(self.manager._preview)
+        self.assertTrue(self.messages)
+        message = self.messages[-1]
+        self.assertIn("PREVIEW BLOCKED", message)
+        self.assertIn("cumulative sum 8.00000 -> 3.50000", message)
+        self.assertIn("raw meter state 30.00000 -> 31.00000", message)
+        self.assertIn("No migration or backup was started", message)
+        self.manager._backup.assert_not_awaited()
+        self.assertEqual(self.rows, [])
+        with self.assertRaisesRegex(HomeAssistantError, "Use Preview"):
+            await self.manager.async_migrate()
+
     async def test_no_write_until_completed_backup_and_preview(self):
         with self.assertRaisesRegex(HomeAssistantError, "Preview"):
             await self.manager.async_migrate()
