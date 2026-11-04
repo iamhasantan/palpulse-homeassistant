@@ -96,7 +96,9 @@ class LegacyMigration:
                 raise MigrationValidationError(
                     f"Statistics with hourly sums not found: {statistic_id}"
                 )
-            if metadata.get("unit_of_measurement") not in {"kWh", "Wh", "MWh"}:
+            if (metadata.get("unit_class") != "energy" or
+                    metadata.get("statistics_unit_of_measurement") not in
+                    {"kWh", "Wh", "MWh"}):
                 raise MigrationValidationError(
                     f"Unsupported legacy energy unit for {statistic_id}"
                 )
