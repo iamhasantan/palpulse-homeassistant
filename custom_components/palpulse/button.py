@@ -12,13 +12,12 @@ from .migration import LegacyMigration
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     """Expose three DISABLED-BY-DEFAULT controls for one Powerpal meter."""
     importer = hass.data[DOMAIN][entry.entry_id]
-    manager = LegacyMigration(hass, entry, importer.statistic_id)
-    await manager.async_load()
-    hass.data.setdefault(f"{DOMAIN}_migration", {})[entry.entry_id] = manager
+    manager = hass.data[f"{DOMAIN}_migration"][entry.entry_id]
     mac = entry.data["meter_mac"]
     async_add_entities([
         MigrationButton(mac, "preview", "Preview historical migration", manager),
         MigrationButton(mac, "migrate", "Import old Powerpal history", manager),
+        MigrationButton(mac, "resume", "Resume interrupted historical migration", manager),
         MigrationButton(mac, "undo", "Undo historical migration", manager),
     ])
 
@@ -41,6 +40,8 @@ class MigrationButton(ButtonEntity):
             self._attr_icon = "mdi:backup-restore"
         elif action == "migrate":
             self._attr_icon = "mdi:database-arrow-right"
+        elif action == "resume":
+            self._attr_icon = "mdi:play-circle-outline"
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -54,6 +55,7 @@ class MigrationButton(ButtonEntity):
             "pre_migration_backup": journal.get("backup_before_migration"),
             "pre_undo_backup": journal.get("backup_before_undo"),
             "last_result": self._manager.last_message[:1024],
+            "progress": self._manager.progress,
         }
 
     async def async_press(self) -> None:
@@ -62,6 +64,8 @@ class MigrationButton(ButtonEntity):
             await self._manager.async_preview()
         elif self._action == "migrate":
             await self._manager.async_migrate()
+        elif self._action == "resume":
+            await self._manager.async_resume()
         else:
             await self._manager.async_undo()
         self.async_write_ha_state()
