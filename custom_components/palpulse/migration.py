@@ -378,8 +378,14 @@ class LegacyMigration:
         cutover = int(journal.get("cutover") or 0)
         if not expected or start <= 0 or cutover <= start:
             raise HomeAssistantError("Incomplete or corrupt migration journal")
-        if expected[0][0] != start or expected[-1][0] >= cutover:
-            raise HomeAssistantError("Migration journal range is invalid")
+        expected_timestamps = [int(row[0]) for row in expected]
+        if (
+            expected_timestamps[0] != start
+            or expected_timestamps[-1] >= cutover
+            or expected_timestamps != sorted(set(expected_timestamps))
+            or any(ts % 3600 or not start <= ts < cutover for ts in expected_timestamps)
+        ):
+            raise HomeAssistantError("Migration journal range is invalid or duplicated")
         self._stage_update(
             "reconciling", total=len(expected),
             message="Verifying existing Recorder rows before any new writes"
