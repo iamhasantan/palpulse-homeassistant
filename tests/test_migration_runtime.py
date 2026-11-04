@@ -101,7 +101,7 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 return []
             if statistic_id == TARGET:
                 return [
-                    row for row in self.rows
+                    row for row in [*self.rows, *self.new_rows]
                     if start.timestamp() <= row["start"] < end.timestamp()
                 ]
             return [
@@ -111,8 +111,9 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.manager._statistics = read
         self.manager._plan = AsyncMock(return_value=self.plan)
+        self.manager._verify_prior_backup = AsyncMock(return_value=None)
 
-    async def test_bad_legacy_sum_preview_reports_detail_without_writes(self):
+    async def test_bad_legacy_sum_preview_warns_without_writes(self):
         decrease = plan_module.LegacyDecrease(
             earlier_hour=CUTOVER - 2 * HOUR,
             later_hour=CUTOVER - HOUR,
@@ -121,22 +122,27 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             before_state=30.0,
             after_state=31.0,
         )
-        self.manager._plan = AsyncMock(
-            side_effect=plan_module.LegacyDecreaseError((decrease,))
-        )
+        self.manager._plan = AsyncMock(return_value=plan_module.MigrationPlan(
+            cutover=self.plan.cutover,
+            first_hour=self.plan.first_hour,
+            hours=self.plan.hours,
+            digest=self.plan.digest,
+            gaps=0,
+            large_steps=0,
+            decreases=(decrease,),
+            anchor_state=self.plan.anchor_state,
+            anchor_sum=self.plan.anchor_sum,
+        ))
         self.manager._backup = AsyncMock()
         await self.manager.async_preview()
-        self.assertIsNone(self.manager._preview)
-        self.assertTrue(self.messages)
+        self.assertIsNotNone(self.manager._preview)
+        self.assertEqual(self.manager.progress["stage"], "ready")
         message = self.messages[-1]
-        self.assertIn("PREVIEW BLOCKED", message)
+        self.assertIn("REVIEW BEFORE IMPORT", message)
         self.assertIn("cumulative sum 8.00000 -> 3.50000", message)
         self.assertIn("raw meter state 30.00000 -> 31.00000", message)
-        self.assertIn("No migration or backup was started", message)
         self.manager._backup.assert_not_awaited()
         self.assertEqual(self.rows, [])
-        with self.assertRaisesRegex(HomeAssistantError, "Use Preview"):
-            await self.manager.async_migrate()
 
     async def test_no_write_until_completed_backup_and_preview(self):
         with self.assertRaisesRegex(HomeAssistantError, "Preview"):
