@@ -64,6 +64,7 @@ class LegacyMigration:
         self._completed = 0
         self._total = 0
         self._listeners = set()
+        self._last_notified_bucket = -1
 
     @property
     def progress(self) -> dict:
@@ -111,6 +112,17 @@ class LegacyMigration:
         self.journal["updated_at"] = datetime.now(timezone.utc).isoformat()
         await self._save()
         self._stage_update(stage, done=completed, total=total)
+        # One persistent notification is updated at major milestones, while
+        # sensors report every verified 240-row batch.
+        if stage == "importing" and total:
+            bucket = int(completed * 10 / total)
+            if getattr(self, "_last_notified_bucket", -1) != bucket:
+                self._last_notified_bucket = bucket
+                self._notify(
+                    f"Importing historical energy: {completed:,} of {total:,} "
+                    f"hours verified ({completed * 100 / total:.1f}%). "
+                    "The original Powerpal statistics are unchanged."
+                )
 
     async def async_load(self) -> None:
         """Keep undo state after a Home Assistant restart."""
@@ -377,6 +389,17 @@ class LegacyMigration:
             get_instance(self.hass).async_block_till_done(), timeout=180
         )
         await self._verify_prior_backup(journal.get("backup_before_migration"))
+        boundary = await self._statistics(
+            self.target_id, _utc(cutover), _utc(cutover + 3600)
+        )
+        if not boundary or int(boundary[0]["start"]) != cutover:
+            raise HomeAssistantError("PalPulse's original cutover hour is missing")
+        if abs(float(boundary[0]["sum"])) > 1e-6:
+            raise HomeAssistantError("PalPulse cutover baseline was modified")
+        if journal.get("anchor_state") is not None and abs(
+            float(boundary[0]["state"]) - float(journal["anchor_state"])
+        ) > 1e-5:
+            raise HomeAssistantError("PalPulse meter state at cutover was changed")
         original = await self._statistics(self.source_id, _utc(start), _utc(cutover))
         validate_original_snapshot(expected, original)
         existing = await self._statistics(self.target_id, _utc(start), _utc(cutover))
@@ -514,6 +537,7 @@ class LegacyMigration:
                     "start": current.first_hour,
                     "cutover": current.cutover,
                     "digest": current.digest,
+                    "anchor_state": current.anchor_state,
                     "rows": [list(row) for row in current.hours],
                     "confirmed_rows": 0,
                     "total_rows": current.count,
@@ -545,6 +569,11 @@ class LegacyMigration:
                 await self._resume_locked()
             except Exception as err:
                 self._stage_update("blocked", message=str(err))
+                if self.journal.get("status") in {"prepared", "applying", "failed"}:
+                    self.journal["status"] = "failed"
+                    self.journal["stage"] = "blocked"
+                    self.journal["last_error"] = str(err)
+                    await self._save()
                 self._notify("Resume blocked: " + str(err) +
                              ". No existing rows were overwritten.")
                 raise
@@ -552,6 +581,9 @@ class LegacyMigration:
     async def async_undo(self) -> None:
         """Remove ONLY journalled target hours before cutover, with a new backup."""
         async with self._lock:
+            self._stage_update(
+                "checking_undo", message="Validating journal and previously imported rows"
+            )
             journal = self.journal
             if journal.get("status") not in {"prepared", "applying", "applied",
                                              "failed", "undoing"}:
@@ -579,10 +611,17 @@ class LegacyMigration:
                 raise HomeAssistantError(
                     "Undo blocked: new short-term statistics exist in import range"
                 )
+            self._stage_update(
+                "backing_up_undo", message="Backing up Recorder before removing migrated hours"
+            )
+            self._notify("Creating a Recorder-inclusive backup before Undo. "
+                         "No statistics have been deleted yet.")
             backup_id = await self._backup("before undo")
             journal["backup_before_undo"] = backup_id
             journal["status"] = "undoing"
             await self._save()
+            self._stage_update("undoing", done=0, total=len(expected),
+                               message="Removing only journalled pre-cutover PalPulse statistics")
 
             # A recorder range clear never touches source statistics or any
             # PalPulse hour at/after cutover. The on_done callback is called
@@ -597,6 +636,7 @@ class LegacyMigration:
             )
             try:
                 await asyncio.wait_for(done.wait(), timeout=90)
+                self._stage_update("verifying_undo", message="Checking targeted hours were removed")
                 remaining = await self._statistics(
                     self.target_id, _utc(start), _utc(end)
                 )
@@ -612,7 +652,10 @@ class LegacyMigration:
                 raise
 
             journal["status"] = "undone"
+            journal["stage"] = "undone"
             await self._save()
+            self._stage_update("undone", done=len(expected), total=len(expected),
+                               message="The imported historical rows were removed")
             self._preview = None
             self._notify(
                 f"Undo completed. Only migrated PalPulse hours before "
