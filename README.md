@@ -9,16 +9,20 @@ hours** into Home Assistant Recorder as a **separate, external energy statistic*
 source or select both sources in Home Assistant's Energy dashboard. This importer
 requires an opt-in firmware event sender and real-world validation before use.
 
+**Compatibility for the next release:** Home Assistant **2026.11.0b2 or newer**.
+The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
+compatibility metadata they were originally published with.
+
 ## Install through Marketplace / HACS
 
 The repository uses the standard `custom_components/palpulse` layout and
 `hacs.json` packaging. **Home Assistant 2026.11 and newer include HACS as
 the built-in Marketplace**. The older standalone HACS integration is replaced.
 
-1. On **HA 2026.11+**, open **Settings > Marketplace > Custom repositories**
+1. On **HA 2026.11.0b2+**, open **Settings > Marketplace > Custom repositories**
    and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
-   **Integration**. On **HA 2026.10 or older**, add the same URL under
-   **HACS > Custom repositories**.
+   **Integration**. Home Assistant 2026.10 and older are not supported by
+   builds published with the updated minimum requirement.
 2. Install **PalPulse Historical Energy** after Marketplace/HACS recognises
    the repository. On Home Assistant 2026.11 and later, a **first installation**
    of a config-flow integration can be loaded immediately. **No restart prompt
@@ -71,8 +75,8 @@ without a separate, reviewed historical replay path.
 - **Update or removal of an already loaded integration:** **Yes**. Marketplace
   creates a Home Assistant **Repairs** notification with a restart action.
   This prompt is owned by Marketplace, not by the PalPulse integration.
-- **Home Assistant 2026.10 and older with standalone HACS:** Restart Home
-  Assistant Core after installing or updating the custom integration.
+- **Home Assistant 2026.10 and older:** Not supported by releases using
+  the new `2026.11.0b2` minimum; older release documentation is historical.
 - **If PalPulse is missing from Add integration after installation:** Check
   **Settings > System > Repairs** and the Home Assistant logs. A manual
   restart is a reasonable troubleshooting step.
