@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import time
+from uuid import uuid4
 
 from homeassistant.components import backup, persistent_notification
 from homeassistant.components.recorder.models import StatisticMeanType
@@ -300,17 +301,11 @@ class LegacyMigration:
             self._notify(self._summary(plan))
 
     async def _backup(self, reason: str) -> str:
-        """Await a completed HA backup INCLUDING the Recorder database.
-
-        Unlike backup.create_automatic, this await doesn't finish until the
-        backup manager has completed its backup task. Never proceed on failure.
-        """
+        """Verify the saved backup, not Home Assistant's transient job ID."""
         manager = backup.async_get_manager(self.hass)
         settings = manager.config.data.create_backup
         agent_ids = list(settings.agent_ids)
         if not agent_ids:
-            # Use one local agent, not all cloud agents, if no backup
-            # destination has been selected by the administrator.
             local = next(iter(manager.local_backup_agents), None)
             if local:
                 agent_ids = [local]
@@ -318,35 +313,60 @@ class LegacyMigration:
             raise HomeAssistantError(
                 "No backup destination is available. Configure HA Backups first"
             )
+
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        unique_name = f"PalPulse {reason} {stamp} {uuid4().hex[:12]}"
         created = await manager.async_create_backup(
             agent_ids=agent_ids,
             include_addons=None,
             include_all_addons=False,
-            include_database=True,   # Mandatory, even if automatic backups exclude it
+            include_database=True,
             include_folders=None,
             include_homeassistant=True,
-            name=f"PalPulse {reason} {stamp}",
+            name=unique_name,
             password=settings.password,
-            with_automatic_settings=False,  # Do not apply auto-backup retention
+            with_automatic_settings=False,
         )
-        backup_id = created.backup_job_id
-        if not backup_id:
-            raise HomeAssistantError("Backup did not return an identifier")
-        # The manager can finish without throwing even if an upload agent failed.
-        # Require a stored, retrievable backup that actually includes Recorder.
-        verified, agent_errors = await manager.async_get_backup(backup_id)
+        if not created.backup_job_id:
+            raise HomeAssistantError("Home Assistant did not return a backup job ID")
+
+        # Home Assistant OS/Supervised returns the Supervisor job's ID from
+        # async_create_backup, which differs from the stored backup's slug.
+        # The name is unique and the resulting backup must exist at one of
+        # the selected destinations. Do not interpret a job as a backup.
+        stored, errors = await manager.async_get_backups()
+        matches = [
+            (backup_id, saved)
+            for backup_id, saved in stored.items()
+            if saved.name == unique_name
+            and any(a in saved.agents for a in agent_ids)
+        ]
+        if len(matches) != 1:
+            raise HomeAssistantError(
+                "Backup creation returned, but the stored backup could not "
+                f"be identified uniquely ({len(matches)} matches). "
+                f"No statistics were modified. Job: {created.backup_job_id}. "
+                f"Agent errors: {errors}"
+            )
+
+        backup_id = matches[0][0]
+        verified, errors = await manager.async_get_backup(backup_id)
         if (
             verified is None
+            or verified.name != unique_name
             or not verified.database_included
             or not verified.homeassistant_included
-            or not any(id_ in verified.agents for id_ in agent_ids)
+            or not any(a in verified.agents for a in agent_ids)
         ):
             raise HomeAssistantError(
-                "Backup could not be verified with its Recorder database. "
-                f"No statistics were modified. Agent errors: {agent_errors}"
+                "Saved backup could not be verified with its Recorder database. "
+                f"No statistics were modified. Backup: {backup_id}. "
+                f"Agent errors: {errors}"
             )
-        _LOGGER.warning("PalPulse %s verified HA backup %s", reason, backup_id)
+        _LOGGER.info(
+            "PalPulse %s verified backup %s (job %s)",
+            reason, backup_id, created.backup_job_id,
+        )
         return backup_id
 
     async def _save(self) -> None:
