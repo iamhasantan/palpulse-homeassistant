@@ -31,6 +31,7 @@ ha_recorder = _module("homeassistant.components.recorder", True)
 ha_models = _module("homeassistant.components.recorder.models")
 ha_statistics = _module("homeassistant.components.recorder.statistics")
 ha_core = _module("homeassistant.core")
+ha_const = _module("homeassistant.const")
 ha_helpers = _module("homeassistant.helpers", True)
 ha_storage = _module("homeassistant.helpers.storage")
 
@@ -59,6 +60,7 @@ def callback(func):
 
 
 ha_core.callback = callback
+ha_const.Platform = types.SimpleNamespace(BUTTON="button")
 
 
 class FakeStore:
@@ -123,9 +125,15 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             listeners.append(handler)
             return lambda: None
 
+        async def forward_platforms(entry, platforms):
+            self.assertEqual(platforms, ["button"])
+
         hass = types.SimpleNamespace(
             bus=types.SimpleNamespace(async_listen=listen),
             data={},
+            config_entries=types.SimpleNamespace(
+                async_forward_entry_setups=forward_platforms
+            ),
             async_create_task=asyncio.create_task,
         )
         entry = types.SimpleNamespace(
