@@ -4,15 +4,17 @@
 
 ## 0.1.0b3
 
-- Fix Marketplace's commit-hash update display by publishing a numbered GitHub
-  release that the normal update channel can discover.
-- Preserve the beta designation in the version and release title. This remains
-  experimental software and is not billing-grade, despite the GitHub release
-  being classified as a regular release for Marketplace compatibility.
-- Raise the minimum Home Assistant requirement to 2026.11.0b2 in HACS metadata.
-- Document how to validate Marketplace release discovery and installation.
-- No changes to the ESP32 firmware, Powerpal entity names, event payloads, or
-  historical energy accounting.
+### What's Changed
+
+- Publish versioned updates through HACS / Home Assistant Marketplace instead
+  of displaying Git commit hashes.
+- Show clear release notes for each update.
+- Require Home Assistant 2026.11.0b2 or newer.
+
+### Notes
+
+- Experimental beta, not billing-grade.
+- No changes to the ESP32 firmware, Powerpal sensors, or energy accounting.
 
 ## 0.1.0b2
 
