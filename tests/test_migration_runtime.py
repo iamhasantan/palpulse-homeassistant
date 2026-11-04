@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import test_importer  # noqa: E402
 
 components = sys.modules["homeassistant.components"]
+statistics = sys.modules["homeassistant.components.recorder.statistics"]
+statistics.async_list_statistic_ids = AsyncMock(return_value=[])
+statistics.statistics_during_period = lambda *args, **kwargs: {}
 backup = types.ModuleType("homeassistant.components.backup")
 notifications = types.ModuleType("homeassistant.components.persistent_notification")
 helpers_recorder = types.ModuleType("homeassistant.helpers.recorder")
