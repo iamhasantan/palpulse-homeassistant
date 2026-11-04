@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix ESPHome history event ingestion on Home Assistant 2026.11 by marking
+  the event-bus listener as an event-loop callback. This prevents the
+  thread-safety exception that discarded incoming Powerpal records and
+  stopped external historical statistics from being created.
+- Add an event-listener regression test to prevent executor-thread delivery.
+- Existing missing minute records are not silently backfilled; previously
+  dropped records still require an explicit, validated recovery process.
+
 - Build a HACS-installable PalPulse companion integration with UI configuration
   for a specific Powerpal BLE device.
 - Add strict parsing of native-minute Powerpal events with meter/calibration checks.
