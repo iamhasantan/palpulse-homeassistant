@@ -1,4 +1,4 @@
-name: Publish PalPulse beta release
+name: Publish PalPulse Marketplace release
 
 on:
   push:
