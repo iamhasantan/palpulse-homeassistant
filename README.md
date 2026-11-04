@@ -23,7 +23,7 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
    and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
    **Integration**. Home Assistant 2026.10 and older are not supported by
    builds published with the updated minimum requirement.
-2. Install **PalPulse Historical Energy** after Marketplace/HACS recognises
+2. Install **PalPulse for Home Assistant** after Marketplace/HACS recognises
    the repository. On Home Assistant 2026.11 and later, a **first installation**
    of a config-flow integration can be loaded immediately. **No restart prompt
    is expected**. If you see **Add service**, continue to step 3.
@@ -70,7 +70,7 @@ renamed, edited, or reset.** PalPulse never changes Energy dashboard settings.
 
 1. Confirm that the original Powerpal sensor has historical hourly readings,
    and PalPulse has at least its first imported hour. Keep the ESP32 running.
-2. Go to **Settings > Devices & services > PalPulse Historical Energy >
+2. Go to **Settings > Devices & services > PalPulse for Home Assistant >
    Entities**. Find and enable these experimental button entities, disabled
    by default:
    **Preview historical migration**, **Import old Powerpal history**,
@@ -117,7 +117,7 @@ latest commit hash. The version and release title still clearly identify
 pre-release, which is why Marketplace displayed a commit hash instead.
 
 1. Keep the PalPulse meter configured and leave the ESP32 firmware unchanged.
-2. Open **Settings > Marketplace > PalPulse Historical Energy**.
+2. Open **Settings > Marketplace > PalPulse for Home Assistant**.
 3. Refresh its information if that control is available. Custom GitHub
    repositories can take time to update their version metadata.
 4. Confirm **Available** shows `0.1.0b3`, not a seven-character commit hash.
@@ -266,7 +266,7 @@ midnight/DST, reconnection and missing event recovery.
 
 ## Licence and prior work
 
-PalPulse Historical Energy is independently authored MIT-licensed code
+PalPulse for Home Assistant is independently authored MIT-licensed code
 using Home Assistant's documented Recorder statistics APIs. It contains no
 third-party Powerpal BLE transport implementation. The ESPHome companion has
 its own [provenance record](https://github.com/iamhasantan/palpulse-esphome/blob/feat/independent-powerpal-ble-foundation/docs/PROVENANCE.md)
