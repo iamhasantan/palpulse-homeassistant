@@ -7,6 +7,7 @@ PalPulse statistic, anchored to its existing first row's cumulative sum.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -18,6 +19,54 @@ MAX_STEP_WARNING_KWH = 15.0
 
 class MigrationValidationError(ValueError):
     """Migration is not safe to perform."""
+
+
+@dataclass(frozen=True)
+class LegacyDecrease:
+    """A source Recorder sum that goes backwards between hourly rows."""
+
+    earlier_hour: int
+    later_hour: int
+    before_sum: float
+    after_sum: float
+    before_state: float
+    after_state: float
+
+    @property
+    def difference(self) -> float:
+        return self.after_sum - self.before_sum
+
+
+class LegacyDecreaseError(MigrationValidationError):
+    """Give a full read-only diagnosis rather than a generic button error."""
+
+    def __init__(self, decreases: tuple[LegacyDecrease, ...]) -> None:
+        if not decreases:
+            raise ValueError("LegacyDecreaseError requires at least one decrease")
+        self.decreases = decreases
+        first = decreases[0]
+        when = datetime.fromtimestamp(first.later_hour, timezone.utc).isoformat()
+        super().__init__(
+            f"{len(decreases)} legacy cumulative-sum decrease(s). "
+            f"First at {when}: {first.before_sum:.5f} to "
+            f"{first.after_sum:.5f} kWh ({first.difference:.5f} kWh). "
+            "Migration blocked; no data was changed"
+        )
+
+
+def diagnose_decreases(
+    old: list[tuple[int, float, float]],
+) -> tuple[LegacyDecrease, ...]:
+    """Detect every legacy sum reversal. Preserve the original rows unchanged."""
+    return tuple(
+        LegacyDecrease(
+            earlier_hour=previous[0], later_hour=current[0],
+            before_sum=previous[2], after_sum=current[2],
+            before_state=previous[1], after_state=current[1],
+        )
+        for previous, current in zip(old, old[1:])
+        if current[2] < previous[2] - 1e-6
+    )
 
 
 @dataclass(frozen=True)
@@ -97,14 +146,14 @@ def plan_migration(
             "Legacy cumulative meter state exceeds PalPulse at cutover"
         )
 
+    decreases = diagnose_decreases(eligible)
+    if decreases:
+        raise LegacyDecreaseError(decreases)
+
     gaps = 0
     large_steps = 0
     for previous, current in zip(eligible, eligible[1:]):
         step = current[2] - previous[2]
-        if step < -1e-6:
-            raise MigrationValidationError(
-                "Legacy cumulative energy decreases. Review before migrating"
-            )
         if current[0] != previous[0] + HOUR_SECONDS:
             gaps += 1
         if step > MAX_STEP_WARNING_KWH:
