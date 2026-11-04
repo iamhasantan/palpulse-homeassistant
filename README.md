@@ -40,7 +40,19 @@ experimental integration: validate timestamped imports before selecting the
 external statistic for grid consumption. Never select both the old Powerpal
 entity and the new external statistic.
 
-### Experimental migration and Undo (0.1.0b4)
+### Experimental migration and Undo (0.1.0b4 and 0.1.0b5)
+
+**New in 0.1.0b5:** If the Preview button previously failed with
+`Legacy cumulative energy decreases`, it now completes a read-only
+diagnostic. Check **Notifications** for each affected hour (first ten shown,
+plus total count), the previous/current Home Assistant cumulative sums,
+and the original sensor states. **Import remains disabled** while any
+legacy cumulative sum reverses. A negative sum change may represent a
+legitimate reset, a repaired statistic, or a bad reading. PalPulse cannot
+distinguish them automatically. No backups or writes run during Preview,
+and the original sensor and historical data remain untouched.
+
+
 
 **Not production ready. This feature is off by default and requires Home
 Assistant 2026.11.0b2 or newer.** This beta is published as a GitHub
