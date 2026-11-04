@@ -49,10 +49,27 @@ class MigrationPlanTests(unittest.TestCase):
         b = migration.plan_migration(list(reversed(self.old)), self.new)
         self.assertEqual(a.digest, b.digest)
 
-    def test_rejects_negative_legacy_consumption(self):
+    def test_rejects_negative_legacy_consumption_with_precise_diagnostic(self):
         self.old[2]["sum"] = 0.1
-        with self.assertRaisesRegex(migration.MigrationValidationError, "decreases"):
+        with self.assertRaises(migration.LegacyDecreaseError) as caught:
             migration.plan_migration(self.old, self.new)
+        issue = caught.exception.decreases[0]
+        self.assertEqual(issue.earlier_hour, CUTOVER - 2 * HOUR)
+        self.assertEqual(issue.later_hour, CUTOVER - HOUR)
+        self.assertAlmostEqual(issue.before_sum, 5.8)
+        self.assertAlmostEqual(issue.after_sum, 0.1)
+        self.assertAlmostEqual(issue.difference, -5.7)
+        self.assertIn("UTC", str(caught.exception))
+        self.assertIn("Migration blocked", str(caught.exception))
+
+    def test_diagnose_all_decreases_not_only_first(self):
+        self.old.insert(1, row(CUTOVER - 3 * HOUR + HOUR // 2, 30.2, 4.0))
+        self.old[3]["sum"] = 3.0
+        # Diagnose function deliberately detects every reversal in source rows.
+        rows = migration._read_rows(self.old, "Original")
+        drops = migration.diagnose_decreases(rows)
+        self.assertEqual(len(drops), 2)
+        self.assertEqual(drops[0].later_hour, CUTOVER - 3 * HOUR + HOUR // 2)
 
     def test_rejects_changed_or_nonbaseline_cutover(self):
         self.new[0]["sum"] = 0.5
