@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.1.0b2
+
+- Fix event-loop thread safety when receiving ESPHome Powerpal history events.
+  Previously, Home Assistant 2026.11 rejected incoming events before PalPulse
+  could import them, leaving the historical statistic missing.
+- Add an event listener regression test.
+- Publish a versioned beta release for Marketplace update testing.
+- No firmware changes or energy source reconfiguration required.
+- Existing dropped records are not automatically recovered. Start with a
+  complete, valid new UTC hour before checking historical statistics.
+
+## Initial beta development (0.1.0b1, unpublished)
+
 - Build a HACS-installable PalPulse companion integration with UI configuration
   for a specific Powerpal BLE device.
 - Add strict parsing of native-minute Powerpal events with meter/calibration checks.

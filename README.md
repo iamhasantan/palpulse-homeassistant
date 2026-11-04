@@ -36,6 +36,32 @@ experimental integration: validate timestamped imports before selecting the
 external statistic for grid consumption. Never select both the old Powerpal
 entity and the new external statistic.
 
+### Update-test procedure for 0.1.0b2
+
+The beta is published as a GitHub **pre-release** with tag `0.1.0b2`,
+matching the integration manifest. A tag alone is not a Marketplace release.
+
+1. In **Settings > Marketplace**, open **PalPulse Historical Energy** and
+   enable its **Pre-release** option in the repository options. Leave the
+   existing configured Powerpal meter untouched.
+2. Use the repository's **Update information / Check for updates** action
+   if available. GitHub custom-repository refresh and update discovery are
+   not necessarily immediate.
+3. When `0.1.0b2` is offered in **Settings > Updates**, review the release
+   notes and install it through Home Assistant (not by copying files).
+4. Follow the restart/Repairs notice and restart Home Assistant. This update
+   changes Python code; restarting is required before the new listener runs.
+5. Confirm no `palpulse` thread-safety exceptions occur in **Settings >
+   System > Logs**, and verify ESPHome `esphome.palpulse_record` events
+   arrive. A complete valid UTC hour is needed before the external statistic
+   `palpulse:powerpal_<mac>_energy` is created.
+6. Do not add the new statistic alongside your existing Powerpal source in
+   the Energy dashboard. Preserve the original source until comparisons pass.
+
+**Current limitation:** Records rejected by the previous thread-safety bug
+were not added to the importer ledger. This version cannot restore them
+without a separate, reviewed historical replay path.
+
 ### Does Home Assistant need restarting?
 
 - **First installation on Home Assistant 2026.11+:** Normally **no**. Marketplace
