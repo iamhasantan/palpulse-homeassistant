@@ -160,10 +160,7 @@ class LegacyMigration:
         if not agent_ids:
             # Use one local agent, not all cloud agents, if no backup
             # destination has been selected by the administrator.
-            candidates = list(manager.backup_agents)
-            local = next(
-                (id_ for id_ in candidates if id_.startswith("backup.")), None
-            )
+            local = next(iter(manager.local_backup_agents), None)
             if local:
                 agent_ids = [local]
         if not agent_ids:
@@ -185,7 +182,20 @@ class LegacyMigration:
         backup_id = created.backup_job_id
         if not backup_id:
             raise HomeAssistantError("Backup did not return an identifier")
-        _LOGGER.warning("PalPulse %s completed HA backup %s", reason, backup_id)
+        # The manager can finish without throwing even if an upload agent failed.
+        # Require a stored, retrievable backup that actually includes Recorder.
+        verified, agent_errors = await manager.async_get_backup(backup_id)
+        if (
+            verified is None
+            or not verified.database_included
+            or not verified.homeassistant_included
+            or not any(id_ in verified.agents for id_ in agent_ids)
+        ):
+            raise HomeAssistantError(
+                "Backup could not be verified with its Recorder database. "
+                f"No statistics were modified. Agent errors: {agent_errors}"
+            )
+        _LOGGER.warning("PalPulse %s verified HA backup %s", reason, backup_id)
         return backup_id
 
     async def _save(self) -> None:
