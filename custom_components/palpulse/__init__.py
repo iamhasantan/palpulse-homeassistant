@@ -15,7 +15,7 @@ import time
 
 from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import async_add_external_statistics
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 
 from .const import CONF_METER_MAC, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
@@ -39,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     importer = PalPulseImporter(hass, meter)
     await importer.async_load()
 
+    @callback
     def _receive(event: Event) -> None:
         hass.async_create_task(importer.async_receive(event.data))
 
