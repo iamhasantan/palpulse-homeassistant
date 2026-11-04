@@ -24,6 +24,7 @@ statistics.statistics_during_period = lambda *args, **kwargs: {}
 backup = types.ModuleType("homeassistant.components.backup")
 notifications = types.ModuleType("homeassistant.components.persistent_notification")
 helpers_recorder = types.ModuleType("homeassistant.helpers.recorder")
+helpers_recorder.get_instance = lambda hass: None
 exceptions = types.ModuleType("homeassistant.exceptions")
 
 
