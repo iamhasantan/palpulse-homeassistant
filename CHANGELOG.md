@@ -105,3 +105,14 @@ behaviour require hardware and Home Assistant validation.
   linking the ESPHome project's engineering provenance record.
 - Explain that Marketplace's update entity is not an energy sensor, and where
   to inspect the external hourly energy statistics after configuring a meter.
+
+- Add native HA diagnostic sensors showing migration stage and percentage, verified
+  rows, total rows, last error, backup ID and resumability. Update persistent
+  progress notifications at approximately 10% intervals.
+- Resume interrupted imports using the existing Import action or a distinct
+  Resume button, only after revalidating the original source, backup, cutover,
+  and every already-written Recorder row.
+- Reconcile the actual Recorder state after crashes, skip matching existing
+  hours, and persist confirmed batch counts before continuing.
+- Fix outdated historical-decrease test expectations and add restart/recovery,
+  duplicate prevention, changed data, backup-loss and status tests.
