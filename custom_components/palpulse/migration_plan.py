@@ -7,7 +7,6 @@ PalPulse statistic, anchored to its existing first row's cumulative sum.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -37,23 +36,6 @@ class LegacyDecrease:
         return self.after_sum - self.before_sum
 
 
-class LegacyDecreaseError(MigrationValidationError):
-    """Give a full read-only diagnosis rather than a generic button error."""
-
-    def __init__(self, decreases: tuple[LegacyDecrease, ...]) -> None:
-        if not decreases:
-            raise ValueError("LegacyDecreaseError requires at least one decrease")
-        self.decreases = decreases
-        first = decreases[0]
-        when = datetime.fromtimestamp(first.later_hour, timezone.utc).isoformat()
-        super().__init__(
-            f"{len(decreases)} legacy cumulative-sum decrease(s). "
-            f"First at {when}: {first.before_sum:.5f} to "
-            f"{first.after_sum:.5f} kWh ({first.difference:.5f} kWh). "
-            "Migration blocked; no data was changed"
-        )
-
-
 def diagnose_decreases(
     old: list[tuple[int, float, float]],
 ) -> tuple[LegacyDecrease, ...]:
@@ -79,6 +61,7 @@ class MigrationPlan:
     digest: str
     gaps: int
     large_steps: int
+    decreases: tuple[LegacyDecrease, ...]
     anchor_state: float
     anchor_sum: float
 
@@ -122,6 +105,8 @@ def plan_migration(
     Original Powerpal rows are copied only before that timestamp. Their
     cumulative sums are shifted by a constant so the final copied sum meets
     the new statistic's first sum. Both existing datasets remain unchanged.
+    Negative source cumulative-sum changes are preserved, not invented or
+    silently corrected. A second explicit Import press is required.
     """
     old = _read_rows(source_rows, "Original Powerpal")
     new = _read_rows(target_rows, "PalPulse")
@@ -146,9 +131,10 @@ def plan_migration(
             "Legacy cumulative meter state exceeds PalPulse at cutover"
         )
 
+    # HA's total_increasing statistics may legitimately show negative
+    # sum deltas for state decreases that do not qualify as counter resets.
+    # Preserve source values exactly, surface them in Preview as warnings.
     decreases = diagnose_decreases(eligible)
-    if decreases:
-        raise LegacyDecreaseError(decreases)
 
     gaps = 0
     large_steps = 0
@@ -176,6 +162,7 @@ def plan_migration(
         digest=digest,
         gaps=gaps,
         large_steps=large_steps,
+        decreases=decreases,
         anchor_state=anchor_state,
         anchor_sum=anchor_sum,
     )
