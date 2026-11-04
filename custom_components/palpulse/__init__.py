@@ -61,7 +61,14 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
-    """Stop receiving data and store pending measurements."""
+    """Avoid unloading a running migration or losing the active progress UI."""
+    manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry.entry_id)
+    if manager is not None and manager.busy:
+        _LOGGER.warning(
+            "PalPulse integration reload refused while historical migration "
+            "is active. Monitor migration progress before restarting Home Assistant"
+        )
+        return False
     if not await hass.config_entries.async_unload_platforms(
         entry, [Platform.BUTTON, Platform.SENSOR]
     ):
