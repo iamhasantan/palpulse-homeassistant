@@ -72,7 +72,7 @@ class LegacyMigration:
         status = self.journal.get("status", "never_run")
         total = self._total or self.journal.get("total_rows", len(self.journal.get("rows", [])))
         done = self._completed
-        percent = round(100 * done / total, 1) if total else None
+        percent = round(100 * max(0, min(done, total)) / total, 1) if total else None
         return {
             "stage": self._stage,
             "journal_status": status,
@@ -129,7 +129,10 @@ class LegacyMigration:
         self.journal = await self._store.async_load() or {}
         status = self.journal.get("status")
         self._total = int(self.journal.get("total_rows", len(self.journal.get("rows", []))))
-        self._completed = int(self.journal.get("confirmed_rows", 0))
+        # Older releases did not save per-batch counts. A finished/undone
+        # journal has a definitive outcome; show 100%, not a false 0%.
+        default_done = self._total if status in {"applied", "undone"} else 0
+        self._completed = int(self.journal.get("confirmed_rows", default_done))
         if status in {"prepared", "applying", "failed"}:
             self._stage = "interrupted"
             self._notify(
@@ -437,7 +440,20 @@ class LegacyMigration:
         await self._checkpoint("importing", done, len(expected))
         for index in range(0, len(missing), CHUNK_SIZE):
             chunk = missing[index:index + CHUNK_SIZE]
-            # Do not resubmit any row already present in Recorder.
+            # An administrator may have adjusted target statistics after the
+            # initial reconciliation. Read each batch just before writing and
+            # refuse to overwrite a row that appeared in the meantime.
+            before_batch = await self._statistics(
+                self.target_id, _utc(chunk[0][0]), _utc(chunk[-1][0] + 3600)
+            )
+            missing_now = missing_migration_rows(
+                expected, before_batch, start, cutover
+            )
+            absent_now = {row[0] for row in missing_now}
+            if any(row[0] not in absent_now for row in chunk):
+                raise HomeAssistantError(
+                    "Target statistics changed during migration; paused safely."
+                )
             async_add_external_statistics(self.hass, metadata, [
                 {"start": _utc(ts), "state": state, "sum": summation}
                 for ts, state, summation in chunk
@@ -567,6 +583,11 @@ class LegacyMigration:
                     "Inspect progress entities before retrying."
                 )
                 raise
+
+    @property
+    def busy(self) -> bool:
+        """Avoid reloading the integration while a long migration is active."""
+        return self._lock.locked()
 
     async def async_resume(self) -> None:
         """Explicit resume button; never starts a new unpreviewed migration."""
