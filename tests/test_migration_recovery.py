@@ -156,6 +156,67 @@ class MigrationResumeTests(unittest.IsolatedAsyncioTestCase):
                 await mgr.async_resume()
         writes.assert_not_called()
 
+    async def test_many_batches_resume_from_committed_partial_prefix(self):
+        # 500 hourly rows with 250 already in Recorder, although the durable
+        # journal still says zero because HA exited before its Store write.
+        n = 500
+        first = runtime.CUTOVER - n * runtime.HOUR
+        self.old_rows[:] = [
+            {"start": first + i * runtime.HOUR,
+             "state": 20.0 + (i + 1) / 10,
+             "sum": 100.0 + (i + 1) / 10}
+            for i in range(n)
+        ]
+        self.new_rows[:] = [
+            {"start": runtime.CUTOVER, "state": 70.0, "sum": 0.0}
+        ]
+        expected = [
+            [x["start"], x["state"], round(x["sum"] - 150.0, 10)]
+            for x in self.old_rows
+        ]
+        self.manager.journal = {
+            "version": 1,
+            "status": "applying",
+            "source": SOURCE,
+            "target": TARGET,
+            "start": first,
+            "cutover": runtime.CUTOVER,
+            "rows": expected,
+            "confirmed_rows": 0,
+            "backup_before_migration": "valid-recorder-backup",
+        }
+        self.rows.extend(
+            {"start": ts, "state": state, "sum": amount}
+            for ts, state, amount in expected[:250]
+        )
+        mgr = await self.restarted_manager()
+        batches = []
+        def record_import(hass, metadata, records):
+            batches.append(len(records))
+            self.rows.extend({
+                "start": row["start"].timestamp(),
+                "state": row["state"],
+                "sum": row["sum"],
+            } for row in records)
+        with patch.object(migration, "async_add_external_statistics", record_import):
+            await mgr.async_resume()
+        self.assertEqual(batches, [240, 10])
+        self.assertEqual(len(self.rows), 500)
+        self.assertEqual(len({r["start"] for r in self.rows}), 500)
+        self.assertEqual(mgr.journal["status"], "applied")
+        self.assertEqual(mgr.journal["confirmed_rows"], 500)
+        self.assertEqual(mgr.progress["percent"], 100)
+
+    async def test_duplicate_journal_timestamp_rejected_before_writes(self):
+        self.prewritten_journal(1)
+        self.manager.journal["rows"].append(list(self.plan.hours[1]))
+        mgr = await self.restarted_manager()
+        with patch.object(migration, "async_add_external_statistics") as writes:
+            with self.assertRaisesRegex(runtime.HomeAssistantError,
+                                        "duplicated"):
+                await mgr.async_resume()
+        writes.assert_not_called()
+
     async def test_all_rows_committed_before_crash_completes_without_rewriting(self):
         self.prewritten_journal(2)
         mgr = await self.restarted_manager()
