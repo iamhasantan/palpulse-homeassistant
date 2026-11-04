@@ -1,0 +1,78 @@
+name: Publish PalPulse beta release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - custom_components/palpulse/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: palpulse-beta-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Validate and publish versioned beta
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Validate integration before release
+        run: |
+          python -m compileall -q custom_components tests
+          python -m json.tool custom_components/palpulse/manifest.json >/dev/null
+          python -m json.tool hacs.json >/dev/null
+          python -m unittest discover -s tests -v
+      - name: Read and validate beta version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import json; print(json.load(open("custom_components/palpulse/manifest.json"))["version"])')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+b[0-9]+$ ]]; then
+            echo "::error::Expected a beta version in the integration manifest"
+            exit 1
+          fi
+          echo "tag=$version" >> "$GITHUB_OUTPUT"
+      - name: Extract matching release notes
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          awk -v tag="$TAG" '
+            $0 == "## " tag {in_release=1; next}
+            in_release && /^## / {exit}
+            in_release {print}
+          ' CHANGELOG.md > "$RUNNER_TEMP/palpulse-release-notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/palpulse-release-notes.md"; then
+            echo "::error::No matching release notes found in CHANGELOG.md for $TAG"
+            exit 1
+          fi
+      - name: Publish pre-release on GitHub
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged"
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "PalPulse Historical Energy $TAG" \
+            --notes-file "$RUNNER_TEMP/palpulse-release-notes.md" \
+            --prerelease
