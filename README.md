@@ -40,6 +40,62 @@ experimental integration: validate timestamped imports before selecting the
 external statistic for grid consumption. Never select both the old Powerpal
 entity and the new external statistic.
 
+### Experimental migration and Undo (0.1.0b4)
+
+**Not production ready. This feature is off by default and requires Home
+Assistant 2026.11.0b2 or newer.** This beta is published as a GitHub
+pre-release for manual selection under Marketplace > Other versions. It is
+not offered as a normal automatic update.
+
+The experiment is scoped to this exact existing Powerpal source statistic:
+
+- Original, read-only: `sensor.powerpal_proxy_powerpal_total_energy`
+- New target: `palpulse:powerpal_d8a5d6d91964_energy` (computed from the
+  meter configured in the integration)
+
+**The source entity and its long-term statistics are never deleted,
+renamed, edited, or reset.** PalPulse never changes Energy dashboard settings.
+
+1. Confirm that the original Powerpal sensor has historical hourly readings,
+   and PalPulse has at least its first imported hour. Keep the ESP32 running.
+2. Go to **Settings > Devices & services > PalPulse Historical Energy >
+   Entities**. Find and enable these experimental button entities, disabled
+   by default:
+   **Preview historical migration**, **Import old Powerpal history**,
+   **Undo historical migration**.
+3. Press **Preview historical migration**. Read the Home Assistant persistent
+   notification. It reports the cutoff, number of old hours, gaps and unusually
+   large source jumps. Preview has no write side effects.
+4. Within ten minutes, press **Import old Powerpal history**. It rechecks the
+   plan and cutoff and refuses to run if anything changed.
+5. Before inserting any rows, the integration calls the Home Assistant Backup
+   manager, explicitly includes the Recorder database, **waits for the backup
+   job to complete**, and verifies that the backup is available from a
+   destination. If backup creation or verification fails, no import occurs.
+6. It writes only legacy hours strictly **before** the earliest existing
+   PalPulse row. It never replaces the target's original zero baseline,
+   any later measurement, or the original sensor's statistics. The migration
+   saves a persistent journal with the exact new rows and backup ID.
+7. To reverse, press **Undo historical migration**. The integration checks
+   that the imported rows haven't been edited, creates and verifies another
+   Recorder-inclusive backup, then clears **only the journalled target time
+   range**. Existing PalPulse rows at and after the cutoff and the entire
+   original Powerpal history are preserved.
+
+**Limitations:** Historical spikes already in the original data remain
+present in the copied history. Missing source hours are not fabricated. The
+first PalPulse synthetic baseline row is kept as-is, so the transition may
+retain a zero-usage baseline interval. The migration shifts historical
+`sum` values by a constant, which can make older sums negative. Energy
+graphs should use differences between consecutive sums, but this behavior
+needs live Home Assistant validation. Review the preview before committing.
+
+**Failure recovery:** If Home Assistant stops during an import, the journal
+stays on disk and the Undo button can remove the subset that was inserted.
+Undo refuses to clear a range containing unfamiliar or altered statistics.
+The backup identifiers are displayed in the buttons' attributes. Never
+delete the source sensor or manually clear its statistics.
+
 ### Marketplace update procedure (0.1.0b3 and later)
 
 Starting with `0.1.0b3`, PalPulse uses a **regular GitHub release** so
