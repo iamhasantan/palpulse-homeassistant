@@ -95,8 +95,14 @@ class MigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             if period == "5minute":
                 return []
             if statistic_id == TARGET:
-                return list(self.rows)
-            return list(self.old_rows)
+                return [
+                    row for row in self.rows
+                    if start.timestamp() <= row["start"] < end.timestamp()
+                ]
+            return [
+                row for row in self.old_rows
+                if start.timestamp() <= row["start"] < end.timestamp()
+            ]
 
         self.manager._statistics = read
         self.manager._plan = AsyncMock(return_value=self.plan)
