@@ -27,7 +27,7 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN, STAT_NAME
 from .migration_plan import (
     MigrationPlan,
-    LegacyDecreaseError,
+    LegacyDecrease,
     MigrationValidationError,
     plan_migration,
     validate_undo,
@@ -120,8 +120,13 @@ class LegacyMigration:
                 f"{plan.large_steps} large legacy consumption jumps "
                 "(copied as recorded, not corrected)"
             )
+        if plan.decreases:
+            warnings.append(
+                f"{len(plan.decreases)} historical cumulative-sum decrease(s) "
+                "(kept exactly as recorded, including negative hourly deltas)"
+            )
         warning_text = "; ".join(warnings) if warnings else "No large jumps flagged"
-        return (
+        message = (
             f"Preview only. {plan.count} old hourly rows from "
             f"{_utc(plan.first_hour).isoformat()} to "
             f"{_utc(plan.cutover).isoformat()} (exclusive) will be added to "
@@ -134,9 +139,12 @@ class LegacyMigration:
             "backup with the Recorder database is mandatory before importing. "
             "Undo makes another backup before removing only the imported hours."
         )
+        if plan.decreases:
+            message += "\n\n" + self._decrease_diagnostic(plan.decreases)
+        return message
 
-    def _decrease_diagnostic(self, error: LegacyDecreaseError) -> str:
-        """Explain the blocked source history without authorizing any writes."""
+    def _decrease_diagnostic(self, decreases: tuple[LegacyDecrease, ...]) -> str:
+        """Warn about original Recorder drops without changing their values."""
         try:
             time_zone = ZoneInfo(self.hass.config.time_zone)
             zone_label = self.hass.config.time_zone
@@ -144,14 +152,13 @@ class LegacyMigration:
             time_zone = timezone.utc
             zone_label = "UTC"
         lines = [
-            "PREVIEW BLOCKED. Original Home Assistant Powerpal hourly cumulative "
-            f"sum decreases {len(error.decreases)} time(s) before PalPulse's "
-            "first data point.",
+            "REVIEW BEFORE IMPORT. Original Powerpal's hourly cumulative sum "
+            f"decreases {len(decreases)} time(s) before the PalPulse cutover.",
             "",
-            f"First {min(10, len(error.decreases))} affected hours "
+            f"First {min(10, len(decreases))} affected hours "
             f"({zone_label}):",
         ]
-        for item in error.decreases[:10]:
+        for item in decreases[:10]:
             hour = datetime.fromtimestamp(
                 item.later_hour, timezone.utc
             ).astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
@@ -164,17 +171,20 @@ class LegacyMigration:
             )
         lines.extend([
             "",
-            "These could be legitimate counter resets or bad/corrected "
-            "Recorder rows. The integration cannot safely decide which. "
-            "Original source readings have NOT been changed.",
-            "No migration or backup was started by this read-only preview. "
-            "Import remains blocked. Do not use manual Adjust statistic "
-            "controls until the source data has been independently reviewed.",
+            "Home Assistant can record these decreases for total_increasing "
+            "entities. Preview does not change the original sensor or its "
+            "history. The migration will preserve all original hour-to-hour "
+            "sum changes, including negative values. It will NOT smooth, "
+            "correct or guess missing consumption.",
+            "If you accept importing this historic behaviour, press the "
+            "separate Import button within ten minutes. Only then will "
+            "PalPulse create and verify a Recorder-inclusive HA backup "
+            "BEFORE writing any PalPulse history. Undo also creates a backup.",
         ])
         return "\n".join(lines)
 
     async def async_preview(self) -> None:
-        """Report source issues without silently loosening import checks."""
+        """Preview original data and warn about decreases before explicit import."""
         async with self._lock:
             self._preview = None
             self._preview_expires = 0.0
@@ -184,9 +194,6 @@ class LegacyMigration:
                 )
             try:
                 plan = await self._plan()
-            except LegacyDecreaseError as err:
-                self._notify(self._decrease_diagnostic(err))
-                return
             except MigrationValidationError as err:
                 self._notify(
                     "PREVIEW BLOCKED. " + str(err) +
