@@ -64,7 +64,7 @@ jobs:
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "PalPulse $tag - EXPERIMENTAL history migration diagnostics and Undo" \
+            --title "PalPulse for Home Assistant $tag - EXPERIMENTAL history migration diagnostics and Undo" \
             --notes-file "$RUNNER_TEMP/experimental-notes.md" \
             --prerelease
           actual="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
