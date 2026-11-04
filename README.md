@@ -112,7 +112,26 @@ Undo refuses to clear a range containing unfamiliar or altered statistics.
 The backup identifiers are displayed in the buttons' attributes. Never
 delete the source sensor or manually clear its statistics.
 
-### Visual migration status, progress and interruption recovery (next experimental beta)
+### Backup verification fix (0.1.0b7)
+
+On Home Assistant OS/Supervised, the value Home Assistant returns from
+`async_create_backup` is a **backup job ID**, which is not always the
+**saved backup ID**. Older experimental builds used the former to look up the
+latter and could fail after a backup had successfully completed.
+
+This beta creates a uniquely named Recorder-inclusive backup, waits until
+Home Assistant's backup job finishes, lists saved backups, finds its actual
+backup ID, and verifies both Home Assistant and Recorder are included at the
+selected backup destination. Any lookup or verification failure stops
+before writing a single historical statistic.
+
+If the import status says **Failed**, open the migration status entity's
+attributes and inspect `last_error` and `last_message`. The generic
+Home Assistant activity dialog stating "No cause was recorded" is a
+logbook detail and does not reflect the PalPulse diagnostic attributes.
+
+### Visual migration status, progress and interruption recovery (0.1.0b6+)
+
 
 PalPulse now exposes two **enabled-by-default** diagnostic entities under
 **Settings > Devices & services > PalPulse for Home Assistant > Entities**:

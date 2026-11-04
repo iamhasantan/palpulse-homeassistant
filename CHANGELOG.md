@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.1.0b7 (experimental, opt-in)
+
+### What's Changed
+
+- Fix a Home Assistant OS/Supervised backup verification bug. HA's
+  `backup_job_id` is a transient job identifier and may differ from the
+  actual saved backup ID returned by Supervisor.
+- Identify the completed, saved backup by a unique name and verify the
+  actual ID, selected destination, Home Assistant contents and Recorder DB
+  **before** making any historical statistics changes.
+- Prevent a false import failure after a backup was successfully created.
+- Expose the underlying failure reason in the migration status entity's
+  `last_error` attribute even if failure occurs before a recovery journal
+  can be created.
+- Add regression tests with deliberately different job and backup IDs,
+  missing/invalid backup results and local destination fallback.
+
+### Important
+
+- The original Powerpal and PalPulse statistics are never changed when
+  backup creation or verification fails.
+- A backup may exist even if an older PalPulse version reported a failed
+  verification. Inspect existing backups before manually creating more.
+- The actual HA backup failure, if any, must still be inspected through the
+  `last_error` attribute or Core logs. No backup failure is bypassed.
+
+
 ## 0.1.0b6 (experimental, opt-in)
 
 ### What's Changed
