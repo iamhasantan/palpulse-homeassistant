@@ -68,7 +68,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          title="PalPulse Historical Energy $TAG (experimental beta)"
+          title="PalPulse for Home Assistant $TAG (experimental beta)"
           notes="$RUNNER_TEMP/palpulse-release-notes.md"
           # HACS/Marketplace detects normal GitHub releases by version tag.
           # Keep the bN beta version, but publish it in the regular channel.
