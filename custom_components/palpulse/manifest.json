@@ -1,6 +1,6 @@
 {
   "domain": "palpulse",
-  "name": "PalPulse Historical Energy",
+  "name": "PalPulse for Home Assistant",
   "after_dependencies": [
     "esphome"
   ],
