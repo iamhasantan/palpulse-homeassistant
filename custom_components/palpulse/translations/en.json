@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "PalPulse historical energy",
+        "title": "PalPulse for Home Assistant",
         "description": "Enter the BLE MAC address of your Powerpal meter. The ESPHome node must emit PalPulse historical record events.",
         "data": {"meter_mac": "Powerpal BLE MAC address"}
       }
