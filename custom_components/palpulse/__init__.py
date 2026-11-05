@@ -42,6 +42,12 @@ EVENT_STALE_SECONDS = 20 * 60
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     """Start a per-meter event listener and persistent import ledger."""
     meter = entry.data[CONF_METER_MAC]
+    # Rename only our own former default entry title. Preserve any title the
+    # user customised, and preserve the unique meter identity and statistics.
+    if getattr(entry, "title", None) == f"PalPulse {meter.upper()}":
+        hass.config_entries.async_update_entry(
+            entry, title="PalPulse for Home Assistant"
+        )
     importer = PalPulseImporter(hass, meter)
     await importer.async_load()
 

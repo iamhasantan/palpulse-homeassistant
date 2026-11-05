@@ -1,5 +1,5 @@
 {
-  "name": "PalPulse Historical Energy",
+  "name": "PalPulse for Home Assistant",
   "homeassistant": "2026.11.0b2",
   "render_readme": true
 }

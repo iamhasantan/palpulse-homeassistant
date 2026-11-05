@@ -27,8 +27,8 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
    the repository. On Home Assistant 2026.11 and later, a **first installation**
    of a config-flow integration can be loaded immediately. **No restart prompt
    is expected**. If you see **Add service**, continue to step 3.
-3. Open **Settings > Devices & services > Add integration > PalPulse Historical
-   Energy**. Enter the **Powerpal BLE meter MAC**, not the ESP32 Wi-Fi MAC.
+3. Open **Settings > Devices & services > Add integration > PalPulse for
+   Home Assistant**. Enter the **Powerpal BLE meter MAC**, not the ESP32 Wi-Fi MAC.
 4. Update your PalPulse ESPHome YAML as described below and rebuild/test it.
 5. In the ESPHome integration options for your proxy, enable **Allow the device
    to perform Home Assistant actions**. This is essential for event delivery.
