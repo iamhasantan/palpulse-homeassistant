@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity import EntityCategory
 
@@ -118,12 +120,19 @@ class LiveHistoryStatusSensor(SensorEntity):
     def extra_state_attributes(self) -> dict:
         status = self._importer.health
         return {
-            "last_event_received": status["last_event_received"],
-            "last_completed_utc_hour": status["last_completed_utc_hour"],
-            "blocked_utc_hour": status["blocked_utc_hour"],
+            "last_event_received": self._as_utc_iso(status["last_event_received"]),
+            "last_completed_utc_hour": self._as_utc_iso(status["last_completed_utc_hour"]),
+            "blocked_utc_hour": self._as_utc_iso(status["blocked_utc_hour"]),
             "skipped_hours": status["skipped_hours"],
-            "last_gap_utc_hour": status["last_gap_utc_hour"],
+            "last_gap_utc_hour": self._as_utc_iso(status["last_gap_utc_hour"]),
             "pending_minute_records": status["pending_minute_records"],
             "message": status["message"],
+            "last_import_error": status["last_import_error"],
             "statistic_id": status["statistic_id"],
         }
+
+    @staticmethod
+    def _as_utc_iso(timestamp: int | None) -> str | None:
+        if timestamp is None:
+            return None
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
