@@ -112,6 +112,34 @@ Undo refuses to clear a range containing unfamiliar or altered statistics.
 The backup identifiers are displayed in the buttons' attributes. Never
 delete the source sensor or manually clear its statistics.
 
+### Live energy recovery and health (0.1.0b8)
+
+The independent **PalPulse live history status** diagnostic entity is visible
+under **Settings > Devices & services > PalPulse for Home Assistant > Entities**.
+It is not the legacy migration progress indicator. Inspect it for:
+
+- `last_event_received`, `last_completed_utc_hour`, `blocked_utc_hour`
+- `skipped_hours`, `last_gap_utc_hour`, `pending_minute_records`
+- `message` and `last_import_error`
+
+Statuses include **Collecting**, **Active**, **Waiting For Complete Hour**,
+**Active With Gaps**, **No Events**, **Recorder Error** and **Halted**.
+
+A missing hour is not converted into a guessed value. After the later hour
+is fully verified and the 15-minute late-event grace expires, PalPulse skips
+the unverified hour and imports the later hour's consumption only. Cumulative
+sums are carried forward from the last verified hour, with no catch-up spike.
+
+If an older version was already stalled, the saved minute buffer and cursors
+are loaded automatically after the integration restarts. Later valid hours
+are processed on the next incoming ESPHome event. If record delivery has
+stopped, investigate `esphome.palpulse_record` under Developer Tools > Events.
+
+**Important:** Do not rerun the legacy migration, reset the energy sensor,
+or edit Home Assistant Recorder to resolve a live gap. Historical gaps remain
+unfilled. This beta has automated recovery tests, but verify its behaviour
+against your own meter before treating it as production ready.
+
 ### Backup verification fix (0.1.0b7)
 
 On Home Assistant OS/Supervised, the value Home Assistant returns from
@@ -302,8 +330,10 @@ existing blocks. See the companion PalPulse ESPHome PR for the revised code.
    Assistant Recorder can upsert the same hour idempotently.
 5. The first accepted complete hour establishes a zero-sum baseline, avoiding
    the existing meter's accumulated total appearing as new consumption.
-6. A missing minute or hour blocks further import rather than silently
-   attributing a backlog to the wrong time. This is a deliberate trade-off.
+6. A missing minute or hour is left unknown. PalPulse waits for late
+   delivery, then advances to a later verified 60-record hour after a 15-minute
+   grace period. Only the later hour's measured consumption is added to the
+   cumulative statistic, never the unrecorded interval.
 
 The resulting external statistic is **not** the existing
 `sensor.powerpal_total_energy`. The original live sensor remains unchanged.
@@ -314,10 +344,12 @@ Do not configure both as separate grid-consumption sources.
 - Powerpal provides 60-second records. This integration produces **hourly**
   historical statistics via Home Assistant's supported API, not 5-minute
   recorder state backfills.
-- The ESPHome-to-HA event transport is not acknowledged or replayable by this
-  beta. If the Home Assistant API is offline, or its event queue loses
-  measurements, an hour may remain incomplete and imports stop. This
-  **fails closed**, not by inventing or moving kWh into a later hour.
+- The ESPHome-to-HA event transport is not acknowledged or replayable by
+  this beta. If a native-minute event is permanently lost, that hour is
+  reported as missing. A subsequent verified complete hour can resume the
+  series without counting missing consumption.
+- If the Powerpal counter resets, calibration changes or conflicting records
+  arrive, imports halt for manual investigation rather than guessing a value.
 - Only the last seven days are accepted. Older imports need a separate
   deliberate migration workflow.
 - A meter calibration change or conflicting record stops imports until a
