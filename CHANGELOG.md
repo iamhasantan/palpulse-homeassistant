@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 0.1.0b8 (experimental, opt-in)
+
+### What's Changed
+
+- Restore live Powerpal consumption after an incomplete hourly record, preventing
+  a single missing minute from indefinitely stopping the Energy dashboard.
+- Allow 15 minutes for late events after a later complete hour, then advance to
+  that verified hour without inventing the missing hours' consumption.
+- Track a durable accounted-energy sum that includes **only verified complete
+  hours**, with compatibility for existing 0.1.0b7 state.
+- Await Recorder's queued writes before advancing the live import cursor.
+- Expose **PalPulse live history status** diagnostic entity with the last
+  event, last imported hour, blocked hour, skipped-hour count, and error details.
+- Log a stalled hour only when the blocking hour changes, rather than hundreds
+  of duplicate warnings for a single missing record.
+- Keep calibration changes, conflicting minute records and real meter-counter
+  discontinuities as hard failures.
+- Rename Marketplace/HACS, installation text and generated configuration
+  entries consistently to **PalPulse for Home Assistant**. Preserve the
+  existing `palpulse` domain, per-meter unique identity and statistic IDs.
+- Add regression tests for interrupted imports, late events, restart/replay,
+  cumulative total continuity, duplicate prevention and official naming.
+
+### Important
+
+- This remains experimental, not billing-grade. Review the Energy dashboard
+  after updating. A genuinely missing hour is still unknown and its energy
+  must **not** be estimated or attributed to the next hour.
+- The old Powerpal source statistic and historical migration ledger are not
+  changed by this update.
+- The new live health sensor is separate from the migration progress sensors.
+- Do not erase or reset the ESP32 or the HA Recorder to recover missing hours.
+
+
 ## 0.1.0b7 (experimental, opt-in)
 
 ### What's Changed

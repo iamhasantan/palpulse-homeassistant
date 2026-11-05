@@ -58,16 +58,24 @@ class ManagerDouble:
 class SensorTests(unittest.IsolatedAsyncioTestCase):
     async def test_entities_show_real_progress_and_recovery_status(self):
         manager = ManagerDouble()
+        importer = test_importer.palpulse.PalPulseImporter(
+            object(), test_importer.MAC
+        )
         hass = types.SimpleNamespace(data={
-            "palpulse_migration": {"example": manager}
+            "palpulse_migration": {"example": manager},
+            "palpulse": {"example": importer},
         })
         entry = types.SimpleNamespace(
             entry_id="example", data={"meter_mac": "d8a5d6d91964"}
         )
         added = []
         await entities.async_setup_entry(hass, entry, added.extend)
-        self.assertEqual(len(added), 2)
-        status, progress = added
+        self.assertEqual(len(added), 3)
+        status, progress, live = added
+        self.assertEqual(live.native_value, "No Events")
+        self.assertEqual(live.extra_state_attributes["skipped_hours"], 0)
+        self.assertEqual(live.extra_state_attributes["statistic_id"],
+                         "palpulse:powerpal_d8a5d6d91964_energy")
         self.assertEqual(status.native_value, "Interrupted")
         self.assertEqual(progress.native_value, 24.0)
         self.assertEqual(progress.extra_state_attributes["completed_rows"], 240)
@@ -76,6 +84,12 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
 
         await status.async_added_to_hass()
         await progress.async_added_to_hass()
+        await live.async_added_to_hass()
+        importer._gap_count = 2
+        importer._status_message = "Recovered after 2 missing hours"
+        importer._notify_health()
+        self.assertEqual(live.extra_state_attributes["skipped_hours"], 2)
+        self.assertEqual(live.writes, 1)
         manager.update(
             stage="importing", completed_rows=480, percent=48.0
         )
@@ -85,6 +99,9 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress.writes, 1)
         await status.async_will_remove_from_hass()
         await progress.async_will_remove_from_hass()
+        await live.async_will_remove_from_hass()
+        importer._notify_health()
+        self.assertEqual(live.writes, 1)
         manager.update(stage="completed")
         self.assertEqual(status.writes, 1)
         self.assertEqual(progress.writes, 1)

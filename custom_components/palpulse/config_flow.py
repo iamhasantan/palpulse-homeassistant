@@ -26,7 +26,7 @@ class PalPulseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(mac)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=f"PalPulse {mac.upper()}",
+                    title="PalPulse for Home Assistant",
                     data={CONF_METER_MAC: mac},
                 )
 
