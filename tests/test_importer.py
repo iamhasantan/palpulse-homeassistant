@@ -324,6 +324,47 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored._accounted_pulses, 600)
         self.assertFalse(restored._halted)
 
+    async def test_waiting_gap_logs_once_instead_of_hundreds(self):
+        await self.feed_custom_hour(BASE, 40000, now=BASE + 2 * 3600)
+        await self.feed_custom_hour(
+            BASE + 3600, 40600, now=BASE + 2 * 3600, skip=9
+        )
+        with self.assertLogs(palpulse._LOGGER, level="WARNING") as observed:
+            await self.feed_custom_hour(
+                BASE + 2 * 3600, 41200, now=BASE + 3 * 3600 + 10
+            )
+            with patch.object(palpulse.time, "time",
+                              return_value=BASE + 3 * 3600 + 30):
+                for minute in range(10):
+                    await self.importer.async_receive(record_event(
+                        BASE + 3 * 3600 + minute * 60,
+                        10, 41800 + (minute + 1) * 10
+                    ))
+        blocked = [line for line in observed.output if "incomplete UTC hour" in line]
+        self.assertEqual(len(blocked), 1)
+        self.assertEqual(self.importer.health["blocked_utc_hour"], BASE + 3600)
+
+    async def test_recorder_failure_does_not_advance_import_cursor(self):
+        class FailedRecorder:
+            async def async_block_till_done(self):
+                raise RuntimeError("Recorder busy")
+
+        with patch.object(palpulse, "get_instance", return_value=FailedRecorder()):
+            await self.feed_custom_hour(BASE, 40000, now=BASE + 2 * 3600)
+        self.assertIsNone(self.importer._last_hour)
+        self.assertEqual(self.importer.health["status"], "Recorder Error")
+        self.assertIn("Recorder busy", self.importer.health["last_import_error"])
+        # The next event replays exactly the same hour without resetting sums.
+        with patch.object(palpulse.time, "time", return_value=BASE + 2 * 3600 + 10):
+            await self.importer.async_receive(
+                record_event(BASE + 3600, 10, 40610)
+            )
+        self.assertEqual(self.importer._last_hour, BASE)
+        self.assertEqual(self.importer.health["status"], "Active")
+        self.assertEqual(self.importer._accounted_pulses, 600)
+        self.assertEqual(len(RECORDER_IMPORTS), 2)
+        self.assertEqual(RECORDER_IMPORTS[0][1], RECORDER_IMPORTS[1][1])
+
     async def test_calibration_change_halts(self):
         await self.feed_hour(BASE, 40000)
         with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
