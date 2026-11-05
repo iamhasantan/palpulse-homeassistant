@@ -360,7 +360,8 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 record_event(BASE + 3600, 10, 40610)
             )
         self.assertEqual(self.importer._last_hour, BASE)
-        self.assertEqual(self.importer.health["status"], "Active")
+        with patch.object(palpulse.time, "time", return_value=BASE + 2 * 3600 + 10):
+            self.assertEqual(self.importer.health["status"], "Active")
         self.assertEqual(self.importer._accounted_pulses, 600)
         self.assertEqual(len(RECORDER_IMPORTS), 2)
         self.assertEqual(RECORDER_IMPORTS[0][1], RECORDER_IMPORTS[1][1])
