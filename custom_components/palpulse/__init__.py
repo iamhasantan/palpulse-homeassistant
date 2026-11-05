@@ -107,6 +107,7 @@ class PalPulseImporter:
         self._blocked_hour: int | None = None
         self._last_event_at: int | None = None
         self._status_message = "Waiting for timestamped Powerpal records"
+        self._last_import_error: str | None = None
         self._listeners: set = set()
 
     def _snapshot(self) -> dict:
@@ -123,6 +124,7 @@ class PalPulseImporter:
             "blocked_hour": self._blocked_hour,
             "last_event_at": self._last_event_at,
             "status_message": self._status_message,
+            "last_import_error": self._last_import_error,
             "records": {
                 str(t): [r.pulses, r.total_pulses]
                 for t, r in self._records.items()
@@ -148,6 +150,7 @@ class PalPulseImporter:
         self._blocked_hour = state.get("blocked_hour")
         self._last_event_at = state.get("last_event_at")
         self._status_message = state.get("status_message", self._status_message)
+        self._last_import_error = state.get("last_import_error")
         if self._last_hour is not None and (
             self._accounted_pulses is None or self._accounted_pulses < 0
         ):
@@ -175,6 +178,8 @@ class PalPulseImporter:
                if self._last_event_at is not None else None)
         if self._halted:
             status = "Halted"
+        elif self._last_import_error:
+            status = "Recorder Error"
         elif age is None or age > EVENT_STALE_SECONDS:
             status = "No Events"
         elif self._blocked_hour is not None:
@@ -194,6 +199,7 @@ class PalPulseImporter:
             "last_gap_utc_hour": self._last_gap_hour,
             "pending_minute_records": len(self._records),
             "message": self._status_message,
+            "last_import_error": self._last_import_error,
             "statistic_id": self.statistic_id,
         }
 
@@ -241,9 +247,26 @@ class PalPulseImporter:
                     record.timestamp <= self._last_timestamp):
                 return  # Already imported, including duplicate replay after restart.
             self._records[record.timestamp] = record
-            await self._drain(now)
-            self._prune(now)
-            self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
+            try:
+                await self._drain(now)
+                self._last_import_error = None
+            except Exception as err:
+                # Never advance the imported hour on Recorder exceptions.
+                # A later event can retry idempotently from the saved cursor.
+                message = f"{type(err).__name__}: {err}"
+                if self._last_import_error != message:
+                    _LOGGER.exception(
+                        "PalPulse live Recorder write failed; keeping cursor "
+                        "unchanged and retrying when new records arrive"
+                    )
+                self._last_import_error = message
+                self._status_message = (
+                    f"Recorder error; last imported hour unchanged: {message}"
+                )
+            finally:
+                self._prune(now)
+                self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
+                self._notify_health()
 
     async def _drain(self, now: int) -> None:
         """Import all complete hours, safely passing permanent missing hours.
