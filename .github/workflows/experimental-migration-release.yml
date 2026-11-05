@@ -1,0 +1,74 @@
+name: Publish experimental migration build
+
+on:
+  push:
+    branches:
+      - experiment/legacy-history-migration-undo
+    # Publish only for an intentional version bump, not every code edit.
+    paths:
+      - custom_components/palpulse/manifest.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: palpulse-experimental-migration
+  cancel-in-progress: false
+
+jobs:
+  experimental-release:
+    name: Test and publish opt-in 0.1.0b8 pre-release
+    if: github.ref == 'refs/heads/experiment/legacy-history-migration-undo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Validate experimental migration
+        run: |
+          set -euo pipefail
+          python -m compileall -q custom_components tests
+          python -m json.tool custom_components/palpulse/manifest.json >/dev/null
+          python -m json.tool hacs.json >/dev/null
+          python -m unittest discover -s tests -v
+      - name: Validate expected beta version and extract notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import json; print(json.load(open("custom_components/palpulse/manifest.json"))["version"])')"
+          if [[ "$version" != "0.1.0b8" ]]; then
+            echo "::error::Experimental publish workflow only permits 0.1.0b8"
+            exit 1
+          fi
+          awk -v tag="$version" '
+            $0 == "## " tag " (experimental, opt-in)" {reading=1; next}
+            reading && /^## / {exit}
+            reading {print}
+          ' CHANGELOG.md > "$RUNNER_TEMP/experimental-notes.md"
+          test -s "$RUNNER_TEMP/experimental-notes.md"
+      - name: Publish separate pre-release without updating main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="0.1.0b8"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing experimental tag $tag is immutable. Refusing to move it."
+            exit 1
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "PalPulse for Home Assistant $tag - EXPERIMENTAL live history gap recovery and integration branding" \
+            --notes-file "$RUNNER_TEMP/experimental-notes.md" \
+            --prerelease
+          actual="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$actual" != "true" ]]; then
+            echo "::error::Experimental release must remain a GitHub pre-release"
+            exit 1
+          fi
