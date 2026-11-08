@@ -50,6 +50,14 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         )
     importer = PalPulseImporter(hass, meter)
     await importer.async_load()
+    # Cost tracking is opt-in. It cannot rewrite or interrupt energy history.
+    from .cost import is_cost_enabled
+    if is_cost_enabled(getattr(entry, "options", {})):
+        from .cost_recorder import PalPulseCostRecorder
+        cost_recorder = PalPulseCostRecorder(hass, entry, meter)
+        await cost_recorder.async_load()
+        importer.cost_recorder = cost_recorder
+        hass.data.setdefault(f"{DOMAIN}_cost", {})[entry.entry_id] = cost_recorder
 
     @callback
     def _receive(event: Event) -> None:
@@ -65,6 +73,16 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     manager = LegacyMigration(hass, entry, importer.statistic_id)
     await manager.async_load()
     hass.data.setdefault(f"{DOMAIN}_migration", {})[entry.entry_id] = manager
+    # Separate opt-in cost migration: historical kWh migration remains unchanged.
+    if getattr(entry, "options", {}).get("legacy_cost_statistic_id"):
+        from .cost_migration import LegacyCostMigration
+        cost_migration = LegacyCostMigration(
+            hass, entry, f"{DOMAIN}:powerpal_{meter}_cost"
+        )
+        await cost_migration.async_load()
+        hass.data.setdefault(f"{DOMAIN}_cost_migration", {})[
+            entry.entry_id
+        ] = cost_migration
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.BUTTON, Platform.SENSOR]
     )
@@ -74,6 +92,10 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     """Avoid unloading a running migration or losing the active progress UI."""
     manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry.entry_id)
+    cost_migration = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
+    if cost_migration is not None and cost_migration.busy:
+        _LOGGER.warning("PalPulse reload refused during an active cost migration")
+        return False
     if manager is not None and manager.busy:
         _LOGGER.warning(
             "PalPulse integration reload refused while historical migration "
@@ -85,6 +107,10 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     ):
         return False
     hass.data.get(f"{DOMAIN}_migration", {}).pop(entry.entry_id, None)
+    hass.data.get(f"{DOMAIN}_cost_migration", {}).pop(entry.entry_id, None)
+    cost_recorder = hass.data.get(f"{DOMAIN}_cost", {}).pop(entry.entry_id, None)
+    if cost_recorder:
+        await cost_recorder.async_flush()
     importer = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if importer:
         await importer.async_flush()
@@ -300,6 +326,10 @@ class PalPulseImporter:
                      "state": base / self._calibration, "sum": 0.0},
                     self._statistic(hour, hour.consumption_pulses),
                 ])
+                if cost_recorder := getattr(self, "cost_recorder", None):
+                    await cost_recorder.async_import_verified_hour(
+                        hour, self._records, self._calibration
+                    )
                 self._baseline_pulses = base
                 self._accounted_pulses = hour.consumption_pulses
                 self._last_hour = start
@@ -383,6 +413,10 @@ class PalPulseImporter:
             # Energy accrued during skipped hours remains intentionally unknown.
             next_accounted = self._accounted_pulses + hour.consumption_pulses
             await self._import([self._statistic(hour, next_accounted)])
+            if cost_recorder := getattr(self, "cost_recorder", None):
+                await cost_recorder.async_import_verified_hour(
+                    hour, self._records, self._calibration
+                )
             self._accounted_pulses = next_accounted
             self._last_hour = hour.hour_start
             self._last_timestamp = hour.last_timestamp
