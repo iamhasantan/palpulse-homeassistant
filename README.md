@@ -13,6 +13,33 @@ requires an opt-in firmware event sender and real-world validation before use.
 The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
 compatibility metadata they were originally published with.
 
+## Correcting a persisted old display name
+
+All current PalPulse release manifests and Marketplace metadata identify the
+integration as **PalPulse for Home Assistant**.
+
+Home Assistant stores more than one name:
+- **PalPulse config entry** in Settings > Devices & services > PalPulse.
+  On integration startup, PalPulse migrates its previously generated default
+  titles (including *PalPulse Historical Energy*) to the correct name, but
+  **never overwrites a user-customized title**.
+- **Marketplace repository device/update entity** in Settings > Devices &
+  services > Marketplace. Home Assistant owns and persists this separate
+  device. When HACS was migrated to the 2026.11 Marketplace, existing
+  repository/device names and update entity IDs were preserved. PalPulse
+  does not change other integrations' device registries or users' names.
+  You can rename the existing Marketplace device from its Home Assistant
+  device page if the saved display name remains old.
+
+A legacy update.palpulse_historical_energy **entity ID** may remain
+unchanged intentionally; changing an ID could break dashboards and automations.
+An old entity ID alone does not mean the wrong version is installed.
+
+After an update, **restart Home Assistant**, then verify the installed
+integration manifest reports the intended version. Do not delete and
+re-add the PalPulse integration merely to fix a label: this can affect
+config-entry ownership of migration controls and stored statistics.
+
 ## Install through Marketplace / HACS
 
 The repository uses the standard `custom_components/palpulse` layout and
