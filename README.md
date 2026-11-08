@@ -381,3 +381,69 @@ third-party Powerpal BLE transport implementation. The ESPHome companion has
 its own [provenance record](https://github.com/iamhasantan/palpulse-esphome/blob/feat/independent-powerpal-ble-foundation/docs/PROVENANCE.md)
 for earlier original engineering work, protocol research and retained on-device
 checkpoint compatibility.
+
+
+## Experimental electricity cost and Red Energy tariffs
+
+The verified energy statistic remains unchanged: palpulse:powerpal_<meter_mac>_energy.
+With optional custom pricing, a separate monetary external statistic appears:
+palpulse:powerpal_<meter_mac>_cost. Select this statistic using Home Assistant's
+Energy Dashboard option **Use an entity tracking total costs**. Home Assistant
+cannot attach current-price or static-price entities directly to externally
+recorded PalPulse energy statistics.
+
+In **Settings > Devices & services > PalPulse for Home Assistant > Configure**:
+
+- **Home Assistant manages costs** (default): no PalPulse cost statistics;
+  your existing native HA setup is untouched.
+- **Custom flat tariff**: usage rate plus optional daily supply fee.
+- **Custom time of use**: weekday/weekend peak, shoulder, off-peak, optional free
+  windows, local-day free allowance and paid excess rate. Time boundaries are
+  local to your Home Assistant timezone, including Australian daylight saving.
+
+For the older **Red Energy Red Power5** plan used in the existing local
+dashboard, set **11:00-16:00** as both weekday and weekend free windows,
+**15 kWh/day** as the free cap, and enter the actual paid rates from your bill.
+The prior dashboard used a smart-paid rate of **16.412 c/kWh**. Confirm it
+is still the correct rate. The old A$1.25/day supply fee was only an
+unverified dashboard assumption, not a tariff confirmed from a bill.
+
+The newer Victorian **Midday Power Saver** standing offer is different:
+**11:00-14:00** with up to **24 kWh/day** free primary-load energy. Do not
+silently apply that schedule to the older Red Power5 plan.
+
+### Importing previous historical electricity costs
+
+If the previous implementation had a genuine Recorder-backed cumulative
+cost statistic, add its **exact statistic ID** in the optional **Previous
+cumulative electricity cost statistic** field. A daily display sensor such
+as sensor.electricity_cost_today is eligible only when it has actual
+cumulative hourly sums. The price-per-kWh entity
+sensor.electricity_usage_price is NOT a historical cost source.
+
+After PalPulse has written its first cost baseline, separately enable the
+disabled-by-default **Preview historical cost migration**, **Import old
+electricity costs**, and **Undo historical cost migration** controls.
+
+The cost migration is separate from the previously completed kWh migration.
+Its read-only preview lists the old cost hours, gaps, anomalies, and cutover.
+It copies the **recorded old sums**, adjusted by a single offset to meet the
+new cost baseline, without repricing history using today's tariffs. New
+PalPulse hours, original usage history, and the original cost source remain
+unchanged. Both Import and Undo require fresh, verified Recorder-inclusive
+Home Assistant backups. Recorder writes are journalled and verified; Undo
+refuses altered or unjournalled rows.
+
+Costs use native one-minute meter timestamps so free and peak transitions
+are assigned accurately. A daily free allowance is shared across local
+hours, including DST days. If free allowance use cannot be established after
+a gap, the cost writer fails closed instead of guessing.
+
+**Supported**: flat rates, time-of-use rates, weekday/weekend schedules,
+free windows, capped free electricity, paid overflow and optional daily
+supply fees. **Not yet supported**: seasonal/public-holiday exceptions,
+controlled-load circuits, solar feed-in, tiered billing blocks and
+demand charges. These require additional meter readings or tariff rules.
+Avoid claiming the resulting estimate matches a bill until the plan's
+complete billing terms have been verified. This feature is **experimental,
+not billing-grade**.
