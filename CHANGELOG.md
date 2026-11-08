@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## 0.1.0b9 (experimental, opt-in, review only)
+
+### What's Changed
+
+- Add optional Australian flat and time-of-use electricity tariffs, retaining
+  Home Assistant managed prices as the untouched default.
+- Price each complete Powerpal minute at its actual Australian local timestamp,
+  including daylight saving, peak, shoulder and off-peak boundaries.
+- Support Red Energy Red Power5 free windows (11:00-16:00), daily 15 kWh
+  allowance, and the paid rate for usage above the allowance. Other providers
+  can configure their own weekday/weekend periods and free caps.
+- Generate a separate external monetary cost statistic for Home Assistant's
+  **Use an entity tracking total costs** option. Existing PalPulse kWh
+  statistics and original Powerpal sensor remain unchanged.
+- Add a separate opt-in, backup-first historical monetary migration. It copies
+  old cumulative cost statistics before the live PalPulse cost cutover,
+  preserving original hourly changes without repricing them at today's rates.
+- Give the cost migration its own Preview, Import, Resume, Undo controls,
+  durable journal, progress reporting and verification.
+- Cover capped free use, paid overflow, DST, gaps and cost-history safeguards
+  with pure unit tests.
+
+### Important
+
+- All rates and the daily supply charge must be verified against the actual
+  electricity bill. The old Red Power5 16.412 c/kWh value and unverified
+  A$1.25/day supply estimate are not guaranteed current.
+- Daily-reset display sensors or price-per-kWh sensors cannot substitute for
+  genuine cumulative historical cost statistics.
+- Cost migration leaves missing historical periods missing, not estimated.
+- Controlled-load, demand, block-pricing, season/holiday exceptions and feed-in
+  credits remain out of scope pending separate validation.
+- Experimental: review and test on a non-production instance before deployment.
+  Neither migration nor code changes are merged into main by this PR.
+
+
 ## 0.1.0b8 (experimental, opt-in)
 
 ### What's Changed
