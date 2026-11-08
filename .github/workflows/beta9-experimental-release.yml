@@ -1,0 +1,79 @@
+name: Publish PalPulse beta 9 experimental test release
+
+# Publish exactly once from the reviewed experimental cost branch.
+# Never merge into main and never move an existing tag.
+on:
+  push:
+    branches:
+      - feat/configurable-electricity-tariffs
+    paths:
+      - .github/workflows/beta9-experimental-release.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: palpulse-beta9-experimental-release
+  cancel-in-progress: false
+
+jobs:
+  beta9:
+    name: Test and publish opt-in 0.1.0b9
+    if: github.ref == 'refs/heads/feat/configurable-electricity-tariffs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Verify experimental version and release notes
+        env:
+          EXPECTED: '0.1.0b9'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import json; print(json.load(open("custom_components/palpulse/manifest.json"))["version"])')"
+          test "$version" = "$EXPECTED" || { echo "::error::Expected $EXPECTED, received $version"; exit 1; }
+          awk -v tag="$EXPECTED" '
+            $0 == "## " tag " (experimental, opt-in, review only)" {in_release=1; next}
+            in_release && /^## / {exit}
+            in_release {print}
+          ' CHANGELOG.md > "$RUNNER_TEMP/palpulse-beta9-notes.md"
+          grep -q '[^[:space:]]' "$RUNNER_TEMP/palpulse-beta9-notes.md" || {
+            echo "::error::Missing beta9 release notes"; exit 1;
+          }
+      - name: Syntax, metadata and accounting regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q custom_components tests
+          python -m json.tool custom_components/palpulse/manifest.json >/dev/null
+          python -m json.tool custom_components/palpulse/strings.json >/dev/null
+          python -m json.tool custom_components/palpulse/translations/en.json >/dev/null
+          python -m json.tool hacs.json >/dev/null
+          python -m unittest discover -s tests -v
+      - name: Create immutable beta 9 pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="0.1.0b9"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Existing $tag is immutable. No tag was moved."
+            exit 1
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "PalPulse for Home Assistant $tag - EXPERIMENTAL Australian tariffs and historical costs" \
+            --notes-file "$RUNNER_TEMP/palpulse-beta9-notes.md" \
+            --prerelease
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isPrerelease,targetCommitish \
+            --jq '{tagName,isPrerelease,targetCommitish}'
+          actual="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          test "$actual" = "true" || { echo "::error::Release must be a pre-release"; exit 1; }
