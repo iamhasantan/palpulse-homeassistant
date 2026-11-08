@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from homeassistant.core import callback
-from homeassistant.helpers.event import async_track_time_change
-from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity import EntityCategory
@@ -29,7 +27,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         LiveHistoryStatusSensor(meter, importer),
     ]
     # Native HA pricing remains untouched until custom pricing is enabled.
-    if entry.options.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_HOME_ASSISTANT:
+    if getattr(entry, "options", {}).get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_HOME_ASSISTANT:
         entities.extend([
             ElectricityPriceSensor(meter, entry, hass.config.currency),
             DailySupplyChargeSensor(meter, entry, hass.config.currency),
@@ -180,6 +178,7 @@ class ElectricityPriceSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         # A timezone-aware local reading is calculated at every minute boundary.
         # This also handles DST changes without treating UTC as the local tariff.
+        from homeassistant.helpers.event import async_track_time_change
         self._unsubscribe_price = async_track_time_change(
             self.hass, self._handle_tick, second=0
         )
@@ -195,6 +194,7 @@ class ElectricityPriceSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
+        from homeassistant.util import dt as dt_util
         return price_for_datetime(
             self._entry.options, dt_util.as_local(dt_util.utcnow())
         )
