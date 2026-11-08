@@ -108,6 +108,16 @@ class PalPulseCostRecorder:
         start = hour.hour_start
         if self._last_hour is not None and start <= self._last_hour:
             return
+        # A previous Recorder write may have succeeded just before HA crashed
+        # while its Store checkpoint failed. Never skip over those committed
+        # but unjournalled cost hours and silently change the cumulative sum.
+        if self._last_hour is not None and start > self._last_hour + 3600:
+            pending = await self._read(self._last_hour + 3600, start)
+            if pending:
+                raise ValueError(
+                    "Recorder has unjournalled cost hours after the last "
+                    "durable checkpoint. Review before advancing cumulative cost"
+                )
         options = self.entry.options
         local_zone = ZoneInfo(self.hass.config.time_zone)
         first_local = datetime.fromtimestamp(start, timezone.utc).astimezone(local_zone)
