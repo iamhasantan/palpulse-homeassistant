@@ -23,6 +23,8 @@ CONF_PEAK_CENTS = "peak_cents_per_kwh"
 CONF_SHOULDER_CENTS = "shoulder_cents_per_kwh"
 CONF_OFFPEAK_CENTS = "offpeak_cents_per_kwh"
 CONF_SUPPLY_CENTS = "daily_supply_cents"
+CONF_FREE_CAP_KWH = "daily_free_cap_kwh"
+CONF_FREE_EXCESS_CENTS = "free_excess_cents_per_kwh"
 CONF_WEEKDAY_FREE = "weekday_free"
 CONF_WEEKEND_FREE = "weekend_free"
 CONF_WEEKDAY_PEAK = "weekday_peak"
@@ -90,6 +92,12 @@ def validate_pricing(options: Mapping[str, object]) -> None:
             raise ValueError(f"Invalid {key}")
 
     if mode == MODE_TOU:
+        cap = float(options.get(CONF_FREE_CAP_KWH, 0))
+        excess = float(options.get(CONF_FREE_EXCESS_CENTS, 0))
+        if not all(math.isfinite(x) for x in (cap, excess)) or cap < 0 or excess < 0 or cap > 10000 or excess > 10000:
+            raise ValueError("Invalid free electricity daily cap or excess rate")
+        if cap > 0 and CONF_FREE_EXCESS_CENTS not in options:
+            raise ValueError("An excess rate is required for a capped free window")
         schedules = {key: parse_windows(options.get(key, "")) for key in WINDOW_FIELDS}
         for day in ("weekday", "weekend"):
             peak = schedules[f"{day}_peak"]
@@ -128,3 +136,13 @@ def daily_supply_dollars(options: Mapping[str, object]) -> float | None:
     if options.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) == MODE_HOME_ASSISTANT:
         return None
     return round(float(options[CONF_SUPPLY_CENTS]) / 100, 6)
+
+
+def free_window_active(options: Mapping[str, object], local_time: datetime) -> bool:
+    """Check a local-date free window, independent of ordinary zero-price tiers."""
+    if options.get(CONF_PRICING_MODE) != MODE_TOU:
+        return False
+    day = "weekday" if local_time.weekday() < 5 else "weekend"
+    minute = local_time.hour * 60 + local_time.minute
+    return any(start <= minute < end for start, end in
+               parse_windows(options.get(f"{day}_free", "")))
