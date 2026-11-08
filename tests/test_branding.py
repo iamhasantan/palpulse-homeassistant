@@ -57,8 +57,11 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("title=INTEGRATION_NAME", source)
 
     def test_old_marketplace_name_is_absent(self):
+        # README may document the old name for migration troubleshooting.
+        # Never permit the old name as the displayed README heading.
+        readme = (ROOT / "README.md").read_text()
+        self.assertTrue(readme.startswith(f"# {NAME}\n"))
         for location in (
-            "README.md",
             "hacs.json",
             "custom_components/palpulse/manifest.json",
             "custom_components/palpulse/config_flow.py",
