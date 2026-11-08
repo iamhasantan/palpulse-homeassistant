@@ -29,6 +29,9 @@ class LegacyCostMigration(LegacyMigration):
         self._store = Store(
             hass, 1, f"{DOMAIN}_cost_migration_{entry.entry_id}"
         )
+        self._notification_title = "PalPulse experimental historical cost migration"
+        self._notification_id = f"palpulse_cost_migration_{entry.entry_id}"
+        self._progress_noun = "historical electricity costs"
 
     def _metadata(self) -> dict:
         return {
