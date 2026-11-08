@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
+from .pricing import (
+    CONF_PRICING_MODE, MODE_HOME_ASSISTANT, daily_supply_dollars,
+    price_for_datetime,
+)
 
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
@@ -15,11 +23,18 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
     manager = hass.data[f"{DOMAIN}_migration"][entry.entry_id]
     meter = entry.data["meter_mac"]
     importer = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+    entities = [
         MigrationStatusSensor(meter, manager),
         MigrationProgressSensor(meter, manager),
         LiveHistoryStatusSensor(meter, importer),
-    ])
+    ]
+    # Native HA pricing remains untouched until custom pricing is enabled.
+    if entry.options.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_HOME_ASSISTANT:
+        entities.extend([
+            ElectricityPriceSensor(meter, entry, hass.config.currency),
+            DailySupplyChargeSensor(meter, entry, hass.config.currency),
+        ])
+    async_add_entities(entities)
 
 
 class MigrationSensor(SensorEntity):
@@ -136,3 +151,64 @@ class LiveHistoryStatusSensor(SensorEntity):
         if timestamp is None:
             return None
         return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+
+class ElectricityPriceSensor(SensorEntity):
+    """Current local-time tariff, ready for HA Energy's current-price option."""
+
+    _attr_has_entity_name = False
+    _attr_should_poll = False
+    _attr_icon = "mdi:currency-usd"
+    _attr_suggested_display_precision = 5
+
+    def __init__(self, meter, entry, currency) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"palpulse_{meter}_electricity_unit_price"
+        self._attr_name = "PalPulse electricity unit price"
+        self._attr_native_unit_of_measurement = f"{currency}/kWh"
+        self._unsubscribe_price = None
+
+    async def async_added_to_hass(self) -> None:
+        # A timezone-aware local reading is calculated at every minute boundary.
+        # This also handles DST changes without treating UTC as the local tariff.
+        self._unsubscribe_price = async_track_time_change(
+            self.hass, self._handle_tick, second=0
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsubscribe_price:
+            self._unsubscribe_price()
+            self._unsubscribe_price = None
+
+    @callback
+    def _handle_tick(self, now: datetime) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        return price_for_datetime(
+            self._entry.options, dt_util.as_local(dt_util.utcnow())
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"pricing_mode": self._entry.options.get(CONF_PRICING_MODE)}
+
+
+class DailySupplyChargeSensor(SensorEntity):
+    """Fixed per-day fee, kept separate from HA's energy-only cost totals."""
+
+    _attr_has_entity_name = False
+    _attr_should_poll = False
+    _attr_icon = "mdi:cash-clock"
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, meter, entry, currency) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"palpulse_{meter}_daily_supply_charge"
+        self._attr_name = "PalPulse daily supply charge"
+        self._attr_native_unit_of_measurement = f"{currency}/day"
+
+    @property
+    def native_value(self) -> float | None:
+        return daily_supply_dollars(self._entry.options)
