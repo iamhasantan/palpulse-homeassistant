@@ -176,6 +176,18 @@ class LegacyMigration:
             return result.get(statistic_id, [])
         return await self.hass.async_add_executor_job(read)
 
+    def _metadata(self) -> dict:
+        """Keep original energy metadata; cost subclasses override only this."""
+        return {
+            "statistic_id": self.target_id,
+            "source": DOMAIN,
+            "name": STAT_NAME,
+            "unit_of_measurement": "kWh",
+            "unit_class": "energy",
+            "mean_type": StatisticMeanType.NONE,
+            "has_sum": True,
+        }
+
     async def _plan(self) -> MigrationPlan:
         available = await async_list_statistic_ids(
             self.hass, {self.source_id, self.target_id}, "sum"
@@ -447,15 +459,7 @@ class LegacyMigration:
                     "PalPulse has five-minute statistics in the import range. "
                     "Resume blocked to avoid overwriting data."
                 )
-        metadata = {
-            "statistic_id": self.target_id,
-            "source": DOMAIN,
-            "name": STAT_NAME,
-            "unit_of_measurement": "kWh",
-            "unit_class": "energy",
-            "mean_type": StatisticMeanType.NONE,
-            "has_sum": True,
-        }
+        metadata = self._metadata()
         journal["status"] = "applying"
         journal["last_error"] = None
         await self._checkpoint("importing", done, len(expected))
