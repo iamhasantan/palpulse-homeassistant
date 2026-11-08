@@ -14,12 +14,21 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
     importer = hass.data[DOMAIN][entry.entry_id]
     manager = hass.data[f"{DOMAIN}_migration"][entry.entry_id]
     mac = entry.data["meter_mac"]
-    async_add_entities([
+    buttons = [
         MigrationButton(mac, "preview", "Preview historical migration", manager),
         MigrationButton(mac, "migrate", "Import old Powerpal history", manager),
         MigrationButton(mac, "resume", "Resume interrupted historical migration", manager),
         MigrationButton(mac, "undo", "Undo historical migration", manager),
-    ])
+    ]
+    cost_manager = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
+    if cost_manager:
+        buttons.extend([
+            CostMigrationButton(mac, "preview", "Preview historical cost migration", cost_manager),
+            CostMigrationButton(mac, "migrate", "Import old electricity costs", cost_manager),
+            CostMigrationButton(mac, "resume", "Resume interrupted cost migration", cost_manager),
+            CostMigrationButton(mac, "undo", "Undo historical cost migration", cost_manager),
+        ])
+    async_add_entities(buttons)
 
 
 class MigrationButton(ButtonEntity):
@@ -69,3 +78,12 @@ class MigrationButton(ButtonEntity):
         else:
             await self._manager.async_undo()
         self.async_write_ha_state()
+
+
+class CostMigrationButton(MigrationButton):
+    """Separate cost migration buttons. Never collide with energy controls."""
+
+    def __init__(self, mac: str, action: str, name: str, manager) -> None:
+        super().__init__(mac, action, name, manager)
+        self._attr_unique_id = f"palpulse_{mac}_{action}_historical_cost_migration"
+        self._attr_icon = "mdi:cash-sync"
