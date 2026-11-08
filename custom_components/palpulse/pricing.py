@@ -23,12 +23,16 @@ CONF_PEAK_CENTS = "peak_cents_per_kwh"
 CONF_SHOULDER_CENTS = "shoulder_cents_per_kwh"
 CONF_OFFPEAK_CENTS = "offpeak_cents_per_kwh"
 CONF_SUPPLY_CENTS = "daily_supply_cents"
+CONF_WEEKDAY_FREE = "weekday_free"
+CONF_WEEKEND_FREE = "weekend_free"
 CONF_WEEKDAY_PEAK = "weekday_peak"
 CONF_WEEKDAY_SHOULDER = "weekday_shoulder"
 CONF_WEEKEND_PEAK = "weekend_peak"
 CONF_WEEKEND_SHOULDER = "weekend_shoulder"
 
 WINDOW_FIELDS = (
+    CONF_WEEKDAY_FREE,
+    CONF_WEEKEND_FREE,
     CONF_WEEKDAY_PEAK,
     CONF_WEEKDAY_SHOULDER,
     CONF_WEEKEND_PEAK,
@@ -106,6 +110,8 @@ def price_for_datetime(options: Mapping[str, object], local_time: datetime) -> f
         return round(float(options[CONF_FLAT_CENTS]) / 100, 6)
     day = "weekday" if local_time.weekday() < 5 else "weekend"
     minute = local_time.hour * 60 + local_time.minute
+    if any(start <= minute < end for start, end in parse_windows(options.get(f"{day}_free", ""))):
+        return 0.0
     for window_type, key in (
         ("peak", CONF_PEAK_CENTS),
         ("shoulder", CONF_SHOULDER_CENTS),
