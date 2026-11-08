@@ -13,7 +13,7 @@ from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
     WINDOW_FIELDS, MODE_HOME_ASSISTANT, MODE_FLAT, MODE_TOU,
-    validate_pricing,
+    validate_pricing, CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS,
 )
 
 
@@ -54,6 +54,7 @@ _PRICING_CHOICES = {
     MODE_FLAT: "Custom flat electricity tariff",
     MODE_TOU: "Custom time-of-use electricity tariff",
 }
+CONF_LEGACY_COST_STATISTIC_ID = "legacy_cost_statistic_id"
 _RATE_SCHEMA = vol.All(vol.Coerce(float), vol.Range(min=0, max=10000))
 
 
@@ -63,26 +64,39 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             self._mode = user_input[CONF_PRICING_MODE]
+            self._legacy_cost_source = user_input.get(CONF_LEGACY_COST_STATISTIC_ID, "").strip()
+            if self._legacy_cost_source and not (
+                self._legacy_cost_source.startswith("sensor.") or ":" in self._legacy_cost_source
+            ):
+                return self.async_show_form(step_id="init", data_schema=self._initial_schema(), errors={"base": "invalid_source"})
             if self._mode == MODE_HOME_ASSISTANT:
-                return self.async_create_entry(data={CONF_PRICING_MODE: self._mode})
+                return self.async_create_entry(data={CONF_PRICING_MODE: self._mode, CONF_LEGACY_COST_STATISTIC_ID: self._legacy_cost_source})
             if self._mode == MODE_FLAT:
                 return await self.async_step_flat()
             return await self.async_step_time_of_use()
 
-        schema = vol.Schema({
+        return self.async_show_form(step_id="init", data_schema=self._initial_schema())
+
+    def _initial_schema(self):
+        return vol.Schema({
             vol.Required(
                 CONF_PRICING_MODE,
                 default=self.config_entry.options.get(
                     CONF_PRICING_MODE, MODE_HOME_ASSISTANT
                 ),
-            ): vol.In(_PRICING_CHOICES)
+            ): vol.In(_PRICING_CHOICES),
+            vol.Optional(
+                CONF_LEGACY_COST_STATISTIC_ID,
+                default=self.config_entry.options.get(
+                    CONF_LEGACY_COST_STATISTIC_ID, ""
+                ),
+            ): str,
         })
-        return self.async_show_form(step_id="init", data_schema=schema)
 
     async def async_step_flat(self, user_input=None):
         errors = {}
         if user_input is not None:
-            options = {CONF_PRICING_MODE: MODE_FLAT, **user_input}
+            options = {CONF_PRICING_MODE: MODE_FLAT, CONF_LEGACY_COST_STATISTIC_ID: self._legacy_cost_source, **user_input}
             try:
                 validate_pricing(options)
             except ValueError:
@@ -91,9 +105,8 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 return self.async_create_entry(data=options)
         prior = self.config_entry.options
         schema = vol.Schema({
-            vol.Required(
-                CONF_FLAT_CENTS, default=prior.get(CONF_FLAT_CENTS, 0)
-            ): _RATE_SCHEMA,
+            (vol.Required(CONF_FLAT_CENTS, default=prior[CONF_FLAT_CENTS])
+             if CONF_FLAT_CENTS in prior else vol.Required(CONF_FLAT_CENTS)): _RATE_SCHEMA,
             vol.Required(
                 CONF_SUPPLY_CENTS, default=prior.get(CONF_SUPPLY_CENTS, 0)
             ): _RATE_SCHEMA,
@@ -107,7 +120,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_time_of_use(self, user_input=None):
         errors = {}
         if user_input is not None:
-            options = {CONF_PRICING_MODE: MODE_TOU, **user_input}
+            options = {CONF_PRICING_MODE: MODE_TOU, CONF_LEGACY_COST_STATISTIC_ID: self._legacy_cost_source, **user_input}
             try:
                 validate_pricing(options)
             except ValueError:
@@ -116,12 +129,21 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 return self.async_create_entry(data=options)
         prior = self.config_entry.options
         schema_fields = {
-            vol.Required(field, default=prior.get(field, 0)): _RATE_SCHEMA
+            (vol.Required(field, default=prior[field])
+             if field in prior else vol.Required(field)): _RATE_SCHEMA
             for field in (
-                CONF_PEAK_CENTS, CONF_SHOULDER_CENTS,
-                CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
+                CONF_PEAK_CENTS, CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS,
             )
         }
+        schema_fields[vol.Required(
+            CONF_SUPPLY_CENTS, default=prior.get(CONF_SUPPLY_CENTS, 0)
+        )] = _RATE_SCHEMA
+        schema_fields[vol.Required(
+            CONF_FREE_CAP_KWH, default=prior.get(CONF_FREE_CAP_KWH, 0)
+        )] = vol.All(vol.Coerce(float), vol.Range(min=0, max=10000))
+        schema_fields[vol.Required(
+            CONF_FREE_EXCESS_CENTS, default=prior.get(CONF_FREE_EXCESS_CENTS, 0)
+        )] = _RATE_SCHEMA
         schema_fields.update({
             vol.Optional(field, default=prior.get(field, "")): str
             for field in WINDOW_FIELDS
