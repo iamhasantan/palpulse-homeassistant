@@ -33,6 +33,15 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         entities.extend([
             ElectricityPriceSensor(meter, entry, hass.config.currency),
             DailySupplyChargeSensor(meter, entry, hass.config.currency),
+            CostImportStatusSensor(
+                meter, hass.data[f"{DOMAIN}_cost"][entry.entry_id]
+            ),
+        ])
+    cost_migration = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
+    if cost_migration:
+        entities.extend([
+            CostMigrationStatusSensor(meter, cost_migration),
+            CostMigrationProgressSensor(meter, cost_migration),
         ])
     async_add_entities(entities)
 
@@ -212,3 +221,55 @@ class DailySupplyChargeSensor(SensorEntity):
     @property
     def native_value(self) -> float | None:
         return daily_supply_dollars(self._entry.options)
+
+
+class CostImportStatusSensor(SensorEntity):
+    """Explain why a cost hour is not generated without hiding usage data."""
+
+    _attr_has_entity_name = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = True
+    _attr_icon = "mdi:cash-check"
+
+    def __init__(self, mac, recorder):
+        self._recorder = recorder
+        self._attr_unique_id = f"palpulse_{mac}_cost_import_status"
+        self._attr_name = "PalPulse cost import status"
+
+    @property
+    def native_value(self):
+        state = self._recorder.status
+        return "Error" if state["last_error"] else (
+            "Active" if state["last_costed_hour"] else "Waiting"
+        )
+
+    @property
+    def extra_state_attributes(self):
+        return self._recorder.status
+
+
+class CostMigrationStatusSensor(MigrationSensor):
+    _attr_icon = "mdi:cash-clock"
+
+    def __init__(self, meter, manager):
+        super().__init__(
+            meter, manager, "cost_status", "PalPulse historical cost migration status"
+        )
+
+    @property
+    def native_value(self):
+        return self._manager.progress["stage"].replace("_", " ").title()
+
+
+class CostMigrationProgressSensor(MigrationSensor):
+    _attr_icon = "mdi:progress-check"
+    _attr_native_unit_of_measurement = "%"
+
+    def __init__(self, meter, manager):
+        super().__init__(
+            meter, manager, "cost_progress", "PalPulse historical cost migration progress"
+        )
+
+    @property
+    def native_value(self):
+        return self._manager.progress["percent"]
