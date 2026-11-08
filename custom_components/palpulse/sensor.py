@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 from .pricing import (
-    CONF_PRICING_MODE, MODE_HOME_ASSISTANT, daily_supply_dollars,
+    CONF_PRICING_MODE, CONF_FREE_CAP_KWH, MODE_HOME_ASSISTANT, daily_supply_dollars,
     price_for_datetime,
 )
 
@@ -29,12 +29,16 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
     # Native HA pricing remains untouched until custom pricing is enabled.
     if getattr(entry, "options", {}).get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_HOME_ASSISTANT:
         entities.extend([
-            ElectricityPriceSensor(meter, entry, hass.config.currency),
             DailySupplyChargeSensor(meter, entry, hass.config.currency),
             CostImportStatusSensor(
                 meter, hass.data[f"{DOMAIN}_cost"][entry.entry_id]
             ),
         ])
+        # With a capped free allowance, a fixed schedule cannot accurately
+        # report the marginal price until every minute of live consumption is
+        # accounted for. Omit that misleading price sensor for capped offers.
+        if not float(entry.options.get(CONF_FREE_CAP_KWH, 0)):
+            entities.append(ElectricityPriceSensor(meter, entry, hass.config.currency))
     cost_migration = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
     if cost_migration:
         entities.extend([
