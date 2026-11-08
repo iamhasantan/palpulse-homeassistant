@@ -67,6 +67,9 @@ class LegacyMigration:
         self._listeners = set()
         self._last_error: str | None = None
         self._last_notified_bucket = -1
+        self._notification_title = "PalPulse experimental history migration"
+        self._notification_id = f"palpulse_migration_{entry.entry_id}"
+        self._progress_noun = "historical energy"
 
     @property
     def progress(self) -> dict:
@@ -121,7 +124,7 @@ class LegacyMigration:
             if getattr(self, "_last_notified_bucket", -1) != bucket:
                 self._last_notified_bucket = bucket
                 self._notify(
-                    f"Importing historical energy: {completed:,} of {total:,} "
+                    f"Importing {self._progress_noun}: {completed:,} of {total:,} "
                     f"hours verified ({completed * 100 / total:.1f}%). "
                     "The original Powerpal statistics are unchanged."
                 )
@@ -161,8 +164,8 @@ class LegacyMigration:
         self.last_message = message
         self._stage_update(self._stage, message=message)
         persistent_notification.async_create(
-            self.hass, message, title="PalPulse experimental history migration",
-            notification_id=f"palpulse_migration_{self.entry.entry_id}",
+            self.hass, message, title=self._notification_title,
+            notification_id=self._notification_id,
         )
 
     async def _statistics(self, statistic_id: str,
