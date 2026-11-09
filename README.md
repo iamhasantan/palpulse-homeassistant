@@ -1,9 +1,9 @@
 # PalPulse for Home Assistant
 
-HACS-installable experimental Home Assistant companion for
-[PalPulse ESPHome](https://github.com/iamhasantan/palpulse-esphome).
-It receives original timestamped Powerpal BLE records and imports **complete UTC
-hours** into Home Assistant Recorder as a **separate, external energy statistic**.
+Powerpal energy history and electricity cost tracking for Home Assistant.
+Works with [PalPulse ESPHome](https://github.com/iamhasantan/palpulse-esphome)
+and preserves verified hourly energy statistics without changing the original
+Powerpal sensors.
 
 **Early beta, not billing-grade.** Do not replace your working whole-home energy
 source or select both sources in Home Assistant's Energy dashboard. This importer
