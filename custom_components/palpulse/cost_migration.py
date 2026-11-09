@@ -34,10 +34,11 @@ class LegacyCostMigration(LegacyMigration):
 
     def __init__(self, hass, entry, target_id):
         super().__init__(hass, entry, target_id)
-        self.source_id = str(entry.options.get(
+        options = getattr(entry, "options", {})
+        self.source_id = str(options.get(
             CONF_LEGACY_COST_STATISTIC_ID, ""
         )).strip()
-        self.source_mode = entry.options.get(
+        self.source_mode = options.get(
             CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
         )
         self._store = Store(
