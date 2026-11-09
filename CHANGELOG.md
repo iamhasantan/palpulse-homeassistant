@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.1.0b10 (experimental, opt-in)
+
+### What's Changed
+
+- Fix the persisted PalPulse integration title reverting to the former
+  **PalPulse Historical Energy** label after an update or restart.
+- Migrate only PalPulse's known automatically generated old entry titles
+  to **PalPulse for Home Assistant** on integration setup.
+- Preserve user-customized entry titles, BLE meter identity, existing
+  historical energy/cost statistics, and migration journals.
+- Keep the separate Home Assistant Marketplace repository/device name and
+  existing update entity IDs untouched. Marketplace owns these saved entries,
+  so users may need to rename the Marketplace device once in Home Assistant.
+- Add name-migration regression tests and troubleshooting instructions.
+- Retain beta 9's opt-in Australian tariffs, Red Energy capped free periods,
+  cumulative cost statistics, and backup-first historical cost migration.
+
+### Important
+
+- This is an experimental pre-release, not billing-grade software.
+- Restart Home Assistant after installing the new integration code, then
+  verify the integration title on Settings > Devices & services.
+- This update does not change existing cost/usage histories or automatically
+  start either historical migration.
+- If only the Marketplace repository device displays the old name, it may
+  need a separate manual rename. PalPulse does not modify Marketplace data.
+
+
 ## 0.1.0b9 (experimental, opt-in, review only)
 
 ### What's Changed
