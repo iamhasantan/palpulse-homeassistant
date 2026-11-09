@@ -595,8 +595,21 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         if manager is None:
             return self.async_abort(reason="history_unavailable")
         if user_input is None:
-            await manager.async_preview()
+            # Native HA wizard displays preview/error itself. Legacy entity
+            # buttons still publish notifications for backwards compatibility.
+            await manager.async_preview(notify=False)
         if not getattr(manager, "_preview", None):
+            if kind == "cost":
+                return self.async_show_menu(
+                    step_id="cost_preview_blocked",
+                    menu_options=[
+                        "cost_check_again", "cost_source_setup",
+                        "overview", "cost_history",
+                    ],
+                    description_placeholders={
+                        "message": manager.last_message[:1400],
+                    },
+                )
             return self.async_abort(
                 reason="preview_unavailable",
                 description_placeholders={
@@ -619,12 +632,65 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return await self._show_history_preview("energy", user_input)
 
     async def async_step_cost_preview(self, user_input=None):
+        """Guide missing prerequisites rather than aborting a safe preview."""
         manager = self._history_manager("cost")
-        # Avoid an unhelpful persistent notification for the common first-run
-        # situation. Keep the original safe button behaviour unchanged.
-        if manager is not None and not manager.source_id:
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        if not manager.source_id:
             return await self.async_step_historical_costs()
-        return await self._show_history_preview("cost", user_input)
+        if user_input is not None:
+            # Do not invalidate an already-armed preview on form submission.
+            return await self._show_history_preview("cost", user_input)
+        return await self.async_step_cost_readiness()
+
+    async def async_step_cost_readiness(self, user_input=None):
+        """Screen for the distinct legacy source and live target prerequisites."""
+        manager = self._history_manager("cost")
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        info = await manager.async_readiness()
+        state = info["status"]
+        if state == "ready":
+            return await self._show_history_preview("cost", None)
+        if state == "source_missing":
+            return await self.async_step_historical_costs()
+        if state == "previous_import":
+            actions = ["cost_resume", "cost_undo", "cost_history"]
+        elif state == "pricing_disabled":
+            actions = [
+                "pricing", "cost_check_again",
+                "cost_source_setup", "overview", "cost_history",
+            ]
+        else:
+            actions = [
+                "cost_check_again", "cost_source_setup",
+                "pricing", "overview", "cost_history",
+            ]
+        return self.async_show_menu(
+            step_id="cost_readiness",
+            menu_options=actions,
+            description_placeholders={
+                "source": info["source"],
+                "target": info["target"],
+                "status": {
+                    "source_invalid": "Invalid historical source",
+                    "source_not_recorded": "Historical source not recorded",
+                    "pricing_disabled": "Custom pricing not enabled",
+                    "cost_writer_error": "Live cost writer error",
+                    "writer_unavailable": "Cost writer unavailable",
+                    "waiting_for_cost": "Waiting for verified live cost",
+                    "target_invalid": "Invalid PalPulse cost statistic",
+                    "recorder_unavailable": "Recorder unavailable",
+                    "previous_import": "Previous migration detected",
+                }.get(state, state),
+                "writer_status": info["writer_status"],
+                "guidance": info["guidance"][:1400],
+            },
+        )
+
+    async def async_step_cost_check_again(self, user_input=None):
+        """Re-read Recorder. Never generate an artificial cost baseline."""
+        return await self.async_step_cost_readiness()
 
     async def _confirm_history_action(self, kind: str, action: str, user_input):
         """Only explicit confirmation can start a mutating operation."""
