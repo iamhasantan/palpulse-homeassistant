@@ -190,6 +190,20 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cost_manager.calls, ["preview"])
         self.assertEqual(self.manager.calls, [])
 
+    async def test_missing_cost_source_opens_picker_without_preview_notification(self):
+        self.cost_manager.source_id = ""
+        menu = await self.flow.async_step_cost_history()
+        self.assertEqual(menu["type"], "menu")
+        self.assertEqual(menu["menu_options"][0], "cost_source_setup")
+        self.assertEqual(menu["description_placeholders"]["source"], "Not configured")
+        first_run = await self.flow.async_step_cost_preview()
+        self.assertEqual(first_run["type"], "form")
+        self.assertEqual(first_run["step_id"], "historical_costs")
+        self.assertEqual(self.cost_manager.calls, [])
+        choose_source = await self.flow.async_step_cost_source_setup()
+        self.assertEqual(choose_source["step_id"], "historical_costs")
+        self.assertEqual(self.manager.calls, [])
+
     async def test_cost_source_keeps_pricing_and_locks_active_journal(self):
         self.cost_manager.journal = {"status": "applied"}
         self.flow.config_entry.options.update({
