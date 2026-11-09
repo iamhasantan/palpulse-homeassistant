@@ -50,13 +50,31 @@ class StatisticMeanType(IntEnum):
 
 ha_models.StatisticMeanType = StatisticMeanType
 RECORDER_IMPORTS = []
+RECORDER_ROWS = {}
+
+
+def statistics_during_period(hass, start, end, statistic_ids, period,
+                             units, types_to_load):
+    rows = [
+        dict(row) for stamp, row in sorted(RECORDER_ROWS.items())
+        if start.timestamp() <= stamp < end.timestamp()
+    ]
+    return {next(iter(statistic_ids)): rows} if rows else {}
 
 
 def async_add_external_statistics(hass, metadata, statistics):
-    RECORDER_IMPORTS.append((metadata, list(statistics)))
+    values = list(statistics)
+    RECORDER_IMPORTS.append((metadata, values))
+    for row in values:
+        RECORDER_ROWS[int(row["start"].timestamp())] = {
+            "start": int(row["start"].timestamp()),
+            "state": row["state"],
+            "sum": row["sum"],
+        }
 
 
 ha_statistics.async_add_external_statistics = async_add_external_statistics
+ha_statistics.statistics_during_period = statistics_during_period
 ha_core.Event = type("Event", (), {})
 ha_core.HomeAssistant = type("HomeAssistant", (), {})
 
@@ -109,8 +127,11 @@ def record_event(timestamp, pulses, total, calibration=CAL):
 class ImporterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         RECORDER_IMPORTS.clear()
+        RECORDER_ROWS.clear()
         FakeStore.VALUES.clear()
-        self.hass = object()
+        self.hass = types.SimpleNamespace(
+            async_add_executor_job=lambda callback: asyncio.to_thread(callback),
+        )
         self.importer = palpulse.PalPulseImporter(self.hass, MAC)
         await self.importer.async_load()
 
@@ -277,6 +298,9 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 stamp = hour + minute * 60
                 legacy["records"][str(stamp)] = [10, base + 10 * (minute + 1)]
         FakeStore.VALUES[f"palpulse_{MAC}"] = legacy
+        RECORDER_ROWS[BASE] = {
+            "start": BASE, "state": 40600 / CAL, "sum": 600 / CAL,
+        }
         self.importer = palpulse.PalPulseImporter(self.hass, MAC)
         await self.importer.async_load()
         self.assertEqual(self.importer._accounted_pulses, 600)
@@ -363,8 +387,10 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(palpulse.time, "time", return_value=BASE + 2 * 3600 + 10):
             self.assertEqual(self.importer.health["status"], "Active")
         self.assertEqual(self.importer._accounted_pulses, 600)
-        self.assertEqual(len(RECORDER_IMPORTS), 2)
-        self.assertEqual(RECORDER_IMPORTS[0][1], RECORDER_IMPORTS[1][1])
+        # The previous write was committed even though acknowledgement failed.
+        # Idempotent retry verifies that row without writing it a second time.
+        self.assertEqual(len(RECORDER_IMPORTS), 1)
+        self.assertEqual(RECORDER_ROWS[BASE]["sum"], 600 / CAL)
 
     async def test_calibration_change_halts(self):
         await self.feed_hour(BASE, 40000)
