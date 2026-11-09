@@ -111,9 +111,27 @@ class FakeManager:
         self.last_message = "No preview yet"
         self.calls = []
         self.progress = {"stage": "idle"}
+        self.readiness_status = "ready"
+        self.block_preview = False
+        self.preview_notify = []
 
-    async def async_preview(self):
+    async def async_readiness(self):
+        self.calls.append("readiness")
+        return {
+            "status": self.readiness_status,
+            "source": self.source_id,
+            "target": self.target_id,
+            "writer_status": "Waiting",
+            "guidance": "Wait for a verified live cost row" if self.readiness_status != "ready" else "Ready",
+        }
+
+    async def async_preview(self, *, notify=True):
         self.calls.append("preview")
+        self.preview_notify.append(notify)
+        if self.block_preview:
+            self._preview = None
+            self.last_message = "Missing one of the expected hourly states"
+            return
         self._preview = types.SimpleNamespace(count=27, gaps=2)
         self.last_message = "27 historical hours checked. No writes were made."
         self.progress["stage"] = "ready"
@@ -187,8 +205,54 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
                          "sensor.old_daily_cost")
         denied = await self.flow.async_step_cost_undo({"confirm_action": True})
         self.assertEqual(denied["reason"], "nothing_to_undo")
-        self.assertEqual(self.cost_manager.calls, ["preview"])
+        self.assertEqual(self.cost_manager.calls, ["readiness", "preview"])
+        self.assertEqual(self.cost_manager.preview_notify, [False])
         self.assertEqual(self.manager.calls, [])
+
+    async def test_missing_live_cost_baseline_is_a_wizard_not_an_abort(self):
+        self.cost_manager.readiness_status = "waiting_for_cost"
+        screen = await self.flow.async_step_cost_preview()
+        self.assertEqual(screen["type"], "menu")
+        self.assertEqual(screen["step_id"], "cost_readiness")
+        self.assertEqual(
+            screen["description_placeholders"]["status"],
+            "Waiting for verified live cost",
+        )
+        self.assertIn("cost_check_again", screen["menu_options"])
+        self.assertIn("pricing", screen["menu_options"])
+        self.assertEqual(self.cost_manager.calls, ["readiness"])
+        self.assertEqual(self.cost_manager.preview_notify, [])
+        self.assertEqual(self.manager.calls, [])
+
+        self.cost_manager.readiness_status = "ready"
+        retry = await self.flow.async_step_cost_check_again()
+        self.assertEqual(retry["type"], "form")
+        self.assertEqual(retry["step_id"], "cost_preview")
+        self.assertEqual(
+            self.cost_manager.calls,
+            ["readiness", "readiness", "preview"]
+        )
+        self.assertEqual(self.cost_manager.preview_notify, [False])
+
+    async def test_disabled_pricing_offers_pricing_setup_not_failed_preview(self):
+        self.cost_manager.readiness_status = "pricing_disabled"
+        result = await self.flow.async_step_cost_preview()
+        self.assertEqual(result["type"], "menu")
+        self.assertEqual(result["menu_options"][0], "pricing")
+        self.assertEqual(self.cost_manager.calls, ["readiness"])
+        self.assertEqual(self.cost_manager.preview_notify, [])
+
+    async def test_preview_plan_failure_renders_recoverable_menu_without_notification(self):
+        self.cost_manager.block_preview = True
+        result = await self.flow.async_step_cost_preview()
+        self.assertEqual(result["type"], "menu")
+        self.assertEqual(result["step_id"], "cost_preview_blocked")
+        self.assertIn(
+            "Missing one of the expected hourly states",
+            result["description_placeholders"]["message"],
+        )
+        self.assertEqual(self.cost_manager.preview_notify, [False])
+        self.assertNotIn("migrate", self.cost_manager.calls)
 
     async def test_missing_cost_source_opens_picker_without_preview_notification(self):
         self.cost_manager.source_id = ""
