@@ -72,16 +72,17 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     manager = LegacyMigration(hass, entry, importer.statistic_id)
     await manager.async_load()
     hass.data.setdefault(f"{DOMAIN}_migration", {})[entry.entry_id] = manager
-    # Separate opt-in cost migration: historical kWh migration remains unchanged.
-    if getattr(entry, "options", {}).get("legacy_cost_statistic_id"):
-        from .cost_migration import LegacyCostMigration
-        cost_migration = LegacyCostMigration(
-            hass, entry, f"{DOMAIN}:powerpal_{meter}_cost"
-        )
-        await cost_migration.async_load()
-        hass.data.setdefault(f"{DOMAIN}_cost_migration", {})[
-            entry.entry_id
-        ] = cost_migration
+    # Historical cost migration controls are always discoverable, independently
+    # of pricing mode and whether a source is configured. Preview fails safely
+    # with instructions if there is no source or live cost baseline.
+    from .cost_migration import LegacyCostMigration
+    cost_migration = LegacyCostMigration(
+        hass, entry, f"{DOMAIN}:powerpal_{meter}_cost"
+    )
+    await cost_migration.async_load()
+    hass.data.setdefault(f"{DOMAIN}_cost_migration", {})[
+        entry.entry_id
+    ] = cost_migration
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.BUTTON, Platform.SENSOR]
     )
