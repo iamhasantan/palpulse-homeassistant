@@ -70,7 +70,7 @@
       },
       "historical_costs": {
         "title": "Previous cost history",
-        "description": "First select how your previous electricity cost was recorded. You will choose the actual sensor or cumulative statistic on the next screen. This does not change your electricity tariff.",
+        "description": "Choose how your old electricity costs were recorded. Next you'll select the actual source from a visual Home Assistant picker. A cost-per-kWh price sensor is not historical cost data.",
         "data": {
           "legacy_cost_source_mode": "Previous cost source type"
         },
@@ -104,12 +104,13 @@
       },
       "cost_history": {
         "title": "Historical electricity costs",
-        "description": "Review and manage historical costs separately from energy history and tariff configuration. Import and Undo require verified backups.",
+        "description": "**Previous cost source:** {source}\n\n**Migration status:** {status}\n\nStart with **Choose your previous cost source**. Select a cumulative monetary statistic or a daily-reset cost sensor from Home Assistant's pickers. Then return here for a read-only preview. Import remains optional and requires an independently verified Recorder-inclusive backup.",
         "menu_options": {
-          "cost_preview": "Preview cost history",
-          "cost_import": "Import reviewed costs",
-          "cost_resume": "Resume interrupted cost import",
-          "cost_undo": "Undo imported historical costs"
+          "cost_source_setup": "1. Choose your previous cost source",
+          "cost_preview": "2. Preview historical costs (read only)",
+          "cost_import": "3. Import reviewed costs (backup required)",
+          "cost_resume": "Resume an interrupted import",
+          "cost_undo": "Undo a previous cost import"
         }
       },
       "energy_preview": {
