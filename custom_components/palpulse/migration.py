@@ -287,8 +287,8 @@ class LegacyMigration:
         ])
         return "\n".join(lines)
 
-    async def async_preview(self) -> None:
-        """Read-only plan with visible status and a short-lived import arm."""
+    async def async_preview(self, *, notify: bool = True) -> None:
+        """Read-only preview; GUI can render results without a popup."""
         async with self._lock:
             self._preview = None
             self._preview_expires = 0.0
@@ -298,7 +298,8 @@ class LegacyMigration:
                     "and safely resume it, or Undo to remove only migrated rows."
                 )
                 self._stage_update("blocked", message=message)
-                self._notify(message)
+                if notify:
+                    self._notify(message)
                 return
             self._stage_update("planning", done=0, total=0,
                                message="Inspecting original and PalPulse statistics")
@@ -306,15 +307,17 @@ class LegacyMigration:
                 plan = await self._plan()
             except Exception as err:
                 self._stage_update("blocked", message=str(err))
-                self._notify(
-                    "PREVIEW BLOCKED. " + str(err) +
-                    ". No data changed; no backup or import started."
-                )
+                if notify:
+                    self._notify(
+                        "PREVIEW BLOCKED. " + str(err) +
+                        ". No data changed; no backup or import started."
+                    )
                 return
             self._preview = plan
             self._preview_expires = time.monotonic() + PREVIEW_SECONDS
             self._stage_update("ready", done=0, total=plan.count)
-            self._notify(self._summary(plan))
+            if notify:
+                self._notify(self._summary(plan))
 
     async def _backup(self, reason: str) -> str:
         """Verify the saved backup, not Home Assistant's transient job ID."""
