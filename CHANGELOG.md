@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0b12
+
 ### What's Changed
 
 - Add a guided, native Home Assistant **Configure** menu with Overview,
@@ -26,8 +28,10 @@
 - A migration launched through the GUI may continue or be interrupted if its
   progress view is closed; consult the status sensors and use the guarded
   Resume tool rather than repeating an unchecked import.
-- Real Home Assistant interface and long-running operation testing remain
-  mandatory before another beta release.
+- Real Home Assistant 2026.11 frontend testing, migration progress checks and
+  a full import/Undo rehearsal on a restored test instance remain outstanding.
+  Do not run a live historical import without reviewing Preview and verifying
+  a complete Recorder-inclusive backup.
 
 
 ## 0.1.0b11
