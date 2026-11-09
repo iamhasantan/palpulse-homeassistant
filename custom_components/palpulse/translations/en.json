@@ -173,7 +173,7 @@
       },
       "overview": {
         "title": "PalPulse status overview",
-        "description": "**Live Powerpal importer:** {energy_status}\n\n**Most recent completed UTC hour (Unix timestamp):** {last_energy_hour}\n\n**Electricity pricing:** {pricing}\n\n**Historical cost source:** {cost_source}\n\n**Historical usage import:** {usage_history}\n\n**Historical cost import:** {cost_history}\n\nFor more detail, open the PalPulse Powerpal device page under Devices & services. This page only reads status; no data is changed."
+        "description": "**Live Powerpal importer:** {energy_status}\n\n**Last verified energy hour:** {last_energy_hour}\n\n**Skipped or incomplete hours:** {energy_gaps}\n\n**Electricity pricing:** {pricing}\n\n**Live cost writer:** {cost_status}\n\n**Historical cost source:** {cost_source}\n\n**Historical usage import:** {usage_history}\n\n**Historical cost import:** {cost_history}\n\nFor details, open the PalPulse Powerpal device page under Devices & services. This page is read-only."
       },
       "free_hours": {
         "title": "Free electricity hours",
