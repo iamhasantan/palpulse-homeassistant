@@ -49,6 +49,153 @@ class LegacyCostMigration(LegacyMigration):
         self._progress_noun = "historical electricity costs"
         self._daily_diagnostics = None
 
+    async def async_readiness(self) -> dict[str, str]:
+        """Read-only prerequisite checks for the historical-cost GUI wizard.
+
+        This deliberately DOES NOT manufacture a cost statistic or choose a
+        historical cutover. The original migration planner remains the final
+        validation authority once the live statistic genuinely exists.
+        """
+        writer = self.hass.data.get(f"{DOMAIN}_cost", {}).get(self.entry.entry_id)
+        writer_status = writer.status if writer is not None else None
+        last_error = (
+            str(writer_status.get("last_error") or "")[:600]
+            if writer_status else ""
+        )
+        base = {
+            "source": self.source_id or "Not configured",
+            "target": self.target_id,
+            "writer_status": (
+                "Error: " + last_error if last_error
+                else "Active" if writer_status and writer_status.get("last_costed_hour") is not None
+                else "Waiting" if writer_status else "Not enabled"
+            ),
+        }
+
+        def result(status: str, guidance: str) -> dict[str, str]:
+            return {**base, "status": status, "guidance": guidance}
+
+        if self.journal.get("status") not in (None, "undone"):
+            return result(
+                "previous_import",
+                "A historical cost migration journal already exists. Review its "
+                "status, Resume or Undo rather than starting a new Import.",
+            )
+        if not self.source_id:
+            return result(
+                "source_missing",
+                "Choose an existing cumulative cost statistic or daily-reset "
+                "monetary sensor first. No import has started.",
+            )
+        if self.source_id == self.target_id or self.source_mode not in SOURCE_MODES:
+            return result(
+                "source_invalid",
+                "The previous cost source or its format is invalid. Reselect "
+                "the actual historical monetary source.",
+            )
+        # The selected historical source and PalPulse's live destination
+        # are different Recorder statistics and must be tested independently.
+        try:
+            available = await async_list_statistic_ids(
+                self.hass, {self.source_id, self.target_id}
+            )
+        except Exception as err:
+            return result(
+                "recorder_unavailable",
+                f"Recorder could not be queried ({type(err).__name__}). "
+                "Review Home Assistant Recorder logs and check again.",
+            )
+        by_id = {item["statistic_id"]: item for item in available}
+        source = by_id.get(self.source_id)
+        if source is None:
+            return result(
+                "source_not_recorded",
+                "Recorder has no historical statistics for the selected old "
+                "cost source. Check that it recorded monetary hourly values "
+                "and choose a different source if necessary.",
+            )
+        if self.source_mode == SOURCE_CUMULATIVE and not source.get("has_sum"):
+            return result(
+                "source_invalid",
+                "The selected cost source lacks cumulative hourly sums. "
+                "Choose daily-reset mode only if it has real hourly closing states.",
+            )
+        if source.get("unit_class") not in (None, "monetary") or (
+            source.get("statistics_unit_of_measurement")
+            not in (None, self.hass.config.currency, "$")
+        ):
+            return result(
+                "source_invalid",
+                "The old cost statistic has an incompatible unit or class. "
+                "Choose a monetary history sensor, not a price-per-kWh sensor.",
+            )
+
+        # An existing external statistic cannot be replaced with an invented
+        # first row. The normal cost recorder must verify and write a full hour.
+        from .cost import is_cost_enabled
+
+        if not is_cost_enabled(self.entry.options):
+            return result(
+                "pricing_disabled",
+                "PalPulse custom electricity pricing is not enabled. Configure "
+                "verified paid rates and the correct Red Energy time windows, "
+                "then save and allow genuine cost history to begin.",
+            )
+        if last_error:
+            return result(
+                "cost_writer_error",
+                "The live cost writer has stopped: " + last_error + ". "
+                "Fix this before checking again. Do not fabricate a baseline.",
+            )
+        if writer is None:
+            return result(
+                "writer_unavailable",
+                "The live cost recorder is not loaded. Check integration errors "
+                "and reload PalPulse after configuring custom pricing.",
+            )
+
+        target = by_id.get(self.target_id)
+        if target is None:
+            return result(
+                "waiting_for_cost",
+                "No live PalPulse monetary statistic has been recorded yet. "
+                "Costing starts only after a complete, timestamp-verified "
+                "hour. A capped free-power offer can also require waiting "
+                "until the next local billing day after a partial/gapped period. "
+                "Check Live cost writer status and try again later.",
+            )
+        if not target.get("has_sum"):
+            return result(
+                "target_invalid",
+                "The PalPulse cost statistic exists without cumulative sums. "
+                "Do not import. Check Recorder diagnostics.",
+            )
+        end = _utc(
+            (int(datetime.now(timezone.utc).timestamp()) // 3600 + 2) * 3600
+        )
+        try:
+            rows = await super()._statistics(self.target_id, EARLIEST, end)
+        except Exception as err:
+            return result(
+                "recorder_unavailable",
+                f"PalPulse cost history could not be read ({type(err).__name__}). "
+                "Check Recorder logs before trying again.",
+            )
+        if not rows:
+            return result(
+                "waiting_for_cost",
+                "PalPulse has registered its cost statistic, but there are "
+                "no verified hourly cost rows yet. Wait for a complete "
+                "hour and use Check again.",
+            )
+        return result(
+            "ready",
+            f"The old source and PalPulse live cost statistic are available "
+            f"({len(rows):,} cost rows currently recorded). Continue to the "
+            "read-only Preview. Import still requires separate confirmation "
+            "and a verified Recorder-inclusive backup.",
+        )
+
     def _metadata(self) -> dict:
         return {
             "statistic_id": self.target_id,
