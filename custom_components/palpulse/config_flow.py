@@ -76,7 +76,103 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["pricing", "historical_costs", "energy_history", "cost_history"],
+            menu_options=["overview", "pricing", "free_hours", "historical_costs", "energy_history", "cost_history"],
+        )
+
+    async def async_step_overview(self, user_input=None):
+        """A read-only summary without forcing the user into entity attributes."""
+        if user_input is not None:
+            return self.async_abort(reason="overview_complete")
+        entry_id = self.config_entry.entry_id
+        importer = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        energy = self._history_manager("energy")
+        costs = self._history_manager("cost")
+        price_mode = self.config_entry.options.get(
+            CONF_PRICING_MODE, MODE_HOME_ASSISTANT
+        )
+        cost_source = self.config_entry.options.get(
+            CONF_LEGACY_COST_STATISTIC_ID, ""
+        )
+        return self.async_show_form(
+            step_id="overview",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "energy_status": importer.health["status"] if importer else "Unavailable",
+                "last_energy_hour": str(
+                    importer.health["last_completed_utc_hour"]
+                ) if importer else "Unavailable",
+                "pricing": _PRICING_CHOICES.get(price_mode, str(price_mode)),
+                "cost_source": str(cost_source or "Not configured"),
+                "usage_history": (
+                    energy.progress["stage"] if energy else "Unavailable"
+                ),
+                "cost_history": (
+                    costs.progress["stage"] if costs else "Unavailable"
+                ),
+            },
+            last_step=True,
+        )
+
+    async def async_step_free_hours(self, user_input=None):
+        """Simple time-picker setup for a single daily free-power window.
+
+        Advanced users keep their weekday/weekend/peak settings in the
+        existing time-of-use pricing form.
+        """
+        prior = self.config_entry.options
+        if prior.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_TOU:
+            return self.async_abort(reason="enable_tou_first")
+
+        def window_defaults():
+            # Do not hide conflicting or multi-window advanced configurations.
+            weekday = str(prior.get("weekday_free", "")).strip()
+            weekend = str(prior.get("weekend_free", "")).strip()
+            if weekday and weekday == weekend and weekday.count("-") == 1 and "," not in weekday:
+                return tuple(weekday.split("-", 1))
+            return ("11:00", "16:00")
+
+        start_default, end_default = window_defaults()
+        errors = {}
+        if user_input is not None:
+            start = str(user_input["free_start"])[:5]
+            end = str(user_input["free_end"])[:5]
+            options = {
+                **prior,
+                "weekday_free": f"{start}-{end}",
+                "weekend_free": f"{start}-{end}",
+                CONF_FREE_CAP_KWH: user_input[CONF_FREE_CAP_KWH],
+                CONF_FREE_EXCESS_CENTS: user_input[CONF_FREE_EXCESS_CENTS],
+            }
+            try:
+                validate_pricing(options)
+            except ValueError:
+                errors["base"] = "invalid_pricing"
+            else:
+                return self.async_create_entry(data=options)
+
+        return self.async_show_form(
+            step_id="free_hours",
+            data_schema=vol.Schema({
+                vol.Required("free_start", default=start_default): selector.TimeSelector(),
+                vol.Required("free_end", default=end_default): selector.TimeSelector(),
+                vol.Required(
+                    CONF_FREE_CAP_KWH,
+                    default=prior.get(CONF_FREE_CAP_KWH, 15),
+                ): selector.NumberSelector(selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kWh",
+                )),
+                vol.Required(
+                    CONF_FREE_EXCESS_CENTS,
+                    default=prior.get(CONF_FREE_EXCESS_CENTS, 0),
+                ): selector.NumberSelector(selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="c/kWh",
+                )),
+            }),
+            errors=errors,
         )
 
     async def async_step_pricing(self, user_input=None):
@@ -119,8 +215,10 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                     ),
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=list(_SOURCE_CHOICES),
-                        translation_key=CONF_LEGACY_COST_SOURCE_MODE,
+                        options=[
+                            {"value": value, "label": label}
+                            for value, label in _SOURCE_CHOICES.items()
+                        ],
                     )
                 ),
             }),
