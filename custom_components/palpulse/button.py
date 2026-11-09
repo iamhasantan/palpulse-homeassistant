@@ -10,7 +10,7 @@ from .migration import LegacyMigration
 
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
-    """Expose three DISABLED-BY-DEFAULT controls for one Powerpal meter."""
+    """Show usage controls and an independent, guarded cost-import group."""
     importer = hass.data[DOMAIN][entry.entry_id]
     manager = hass.data[f"{DOMAIN}_migration"][entry.entry_id]
     mac = entry.data["meter_mac"]
@@ -23,10 +23,10 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
     cost_manager = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
     if cost_manager:
         buttons.extend([
-            CostMigrationButton(mac, "preview", "Preview historical cost migration", cost_manager),
-            CostMigrationButton(mac, "migrate", "Import old electricity costs", cost_manager),
-            CostMigrationButton(mac, "resume", "Resume interrupted cost migration", cost_manager),
-            CostMigrationButton(mac, "undo", "Undo historical cost migration", cost_manager),
+            CostMigrationButton(mac, "preview", "Preview old daily electricity costs", cost_manager),
+            CostMigrationButton(mac, "migrate", "Import old daily electricity costs", cost_manager),
+            CostMigrationButton(mac, "resume", "Resume interrupted daily cost import", cost_manager),
+            CostMigrationButton(mac, "undo", "Undo historical daily cost import", cost_manager),
         ])
     async_add_entities(buttons)
 
@@ -86,4 +86,7 @@ class CostMigrationButton(MigrationButton):
     def __init__(self, mac: str, action: str, name: str, manager) -> None:
         super().__init__(mac, action, name, manager)
         self._attr_unique_id = f"palpulse_{mac}_{action}_historical_cost_migration"
+        # Cost controls remain separately preview/backup gated; show them even
+        # before a cost source has been configured, so users can find the feature.
+        self._attr_entity_registry_enabled_default = True
         self._attr_icon = "mdi:cash-sync"
