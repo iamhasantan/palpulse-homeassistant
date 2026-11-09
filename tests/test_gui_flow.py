@@ -366,6 +366,35 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
             "custom_time_of_use",
         )
 
+    async def test_energy_integrity_options_screen_does_not_mutate_history(self):
+        self.hass.config = types.SimpleNamespace(time_zone="Australia/Melbourne")
+        report = {
+            "hour_count": 96, "offset": 0.0,
+            "issues": (types.SimpleNamespace(
+                hour_start=1794193200,
+                meter_delta=3.240625,
+                recorded_delta=-11175.8569,
+                correction=11179.097525,
+            ),),
+        }
+
+        async def read_only_report():
+            self.cost_manager.calls.append("energy_integrity_read")
+            return report
+
+        self.hass.data["palpulse"] = {
+            "test": types.SimpleNamespace(async_integrity_report=read_only_report)
+        }
+        screen = await self.flow.async_step_energy_integrity()
+        self.assertEqual(screen["type"], "form")
+        self.assertEqual(screen["step_id"], "energy_integrity")
+        self.assertIn(
+            "11179.097525",
+            screen["description_placeholders"]["required_adjustment"],
+        )
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.cost_manager.calls, ["energy_integrity_read"])
+
     async def test_device_identity_and_translations(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
