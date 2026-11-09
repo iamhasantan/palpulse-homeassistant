@@ -329,6 +329,30 @@ class PalPulseImporter:
 
         return await self.hass.async_add_executor_job(read)
 
+    async def async_integrity_report(self, lookback_hours: int = 96) -> dict:
+        """Read-only scan for discontinuities in recent energy statistics."""
+        from .energy_integrity import detect_large_energy_resets
+
+        end_stamp = (int(time.time()) // HOUR_SECONDS + 2) * HOUR_SECONDS
+        start_stamp = end_stamp - max(24, min(168, lookback_hours)) * HOUR_SECONDS
+        start = datetime.fromtimestamp(start_stamp, timezone.utc)
+        end = datetime.fromtimestamp(end_stamp, timezone.utc)
+
+        def read():
+            return statistics_during_period(
+                self.hass, start, end, {self.statistic_id},
+                "hour", {"energy": "kWh"}, {"state", "sum"},
+            ).get(self.statistic_id, [])
+
+        rows = await self.hass.async_add_executor_job(read)
+        return {
+            "statistic_id": self.statistic_id,
+            "hour_count": len(rows),
+            "issues": detect_large_energy_resets(rows),
+            "last_completed_hour": self._last_hour,
+            "offset": self._sum_offset,
+        }
+
     async def _continuity_sum(self, hour) -> float:
         """Continue from the previous Recorder sum only if the meter state matches.
 
