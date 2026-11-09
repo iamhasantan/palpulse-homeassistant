@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## 0.1.0b14
+
+### What's Changed
+
+- Fix a major PalPulse live-energy continuity bug that could cause an
+  impossible, multi-thousand-kWh negative hourly change after an earlier
+  historical Powerpal migration.
+- Reconcile every new live energy hour against Recorder's previous committed
+  cumulative sum, **only if the previous raw meter state agrees** with the
+  durable Powerpal cursor. A stored pulse-derived baseline is no longer
+  allowed to silently replace a rebaselined Recorder sum.
+- Persist the verified Recorder sum offset, preserve complete-hour and gap
+  checks, prevent overwriting conflicting existing hours, and verify each
+  committed Recorder row before advancing the importer cursor.
+- Add a read-only **Energy history continuity check** under Configure, with
+  detected anomalous intervals, measured electricity usage, recorded sum
+  change and candidate correction. It never repairs history automatically.
+- Bundle the cost-migration prerequisites wizard from PR #21, with separate
+  old-source and live-cost checks, Check Recorder again, pricing shortcuts
+  and recoverable Preview screens instead of misleading error popups.
+- Add regression tests for the exact 9 November 2026 +11,179.097525 kWh
+  discontinuity, restart continuity, invalid Recorder states and no-overwrite
+  protection.
+
+### Important
+
+- This version fixes **future live writes**. It does **not** automatically
+  repair historical negative sum rows created by older betas. Before manually
+  adjusting the affected hour, verify a complete Recorder-inclusive backup
+  and inspect adjacent hourly Recorder statistics.
+- A single large negative anomaly may be repairable using Home Assistant's
+  existing Adjust sum interface with the **correct hourly consumption**,
+  not a cumulative total or lifetime offset. Do not adjust if more than one
+  anomaly or a meter-state conflict exists.
+- The original historical import, cost import and recovery journals stay
+  unchanged. No imports or Undo operations are started automatically.
+- All features remain experimental, and real Home Assistant validation is
+  still required before enabling historical cost Import/Undo.
+
 ### Historical cost migration readiness wizard
 
 - Replace the missing PalPulse cost statistic dead-end with a native,
