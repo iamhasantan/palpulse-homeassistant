@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### What's Changed
+
+- Expose an independent **Historical daily cost import** configuration menu
+  alongside electricity pricing without resetting either setting.
+- Always show dedicated Preview, Import, Resume and Undo electricity-cost
+  migration controls on the PalPulse integration's Entities page.
+- Accept previous cumulative monetary hourly sums or, explicitly, a verified
+  daily-reset monetary sensor with actual hourly closing-state history.
+- For daily-reset sources, import only complete local calendar days and verify
+  observed midnight resets, including 23/25-hour daylight-saving days. Skip
+  incomplete, inconsistent or missing days without estimating bills.
+- Preserve immutable original usage/cost histories, and retain independent,
+  backup-first cost migration and targeted Undo.
+- Refuse changes to the old cost source while an import journal is active.
+- Document the separate cost import workflow and simplify the README introduction.
+
+### Important
+
+- Daily-reset migration needs Recorder **hourly closing states**, not hourly
+  averages, current-price sensors or template values lacking historic data.
+- No import is allowed without an existing live PalPulse cost baseline, an
+  explicit Preview, and a verified Recorder-inclusive Home Assistant backup.
+- Historical amounts are not recalculated using today's tariff. No migration
+  is started automatically, and no code has been merged into main.
+
+
 ## 0.1.0b10 (experimental, opt-in)
 
 ### What's Changed
