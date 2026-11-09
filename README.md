@@ -13,6 +13,41 @@ requires an opt-in firmware event sender and real-world validation before use.
 The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
 compatibility metadata they were originally published with.
 
+## Guided Home Assistant interface (next beta)
+
+PalPulse uses **native Home Assistant configuration dialogs and selectors**.
+No separate frontend application, manual YAML or external website is required.
+Open **Settings > Devices & services > PalPulse for Home Assistant > Configure**:
+
+- **Overview and health** shows live importer status, pricing mode, cost-source
+  configuration, and independent historical import statuses.
+- **Electricity pricing** keeps Home Assistant's default behaviour or allows
+  flat and time-of-use tariff setup.
+- **Free electricity hours** gives start/end time pickers and numeric controls
+  for a shared daily free window, cap and paid excess. The Time of Use screen
+  retains advanced separate weekday/weekend and peak/shoulder schedules.
+  The simple free-hours screen requires an existing custom time-of-use tariff.
+- **Previous cost history** offers a visual picker for either an existing
+  Recorder cumulative statistic or a daily-reset sensor, instead of requiring
+  the user to memorise its entity/statistic identifier.
+- **Electricity usage history** and **Historical electricity costs** open
+  independent guided screens for Preview, Import, Resume and Undo. Preview
+  reads data without modification; Import requires its preview plus a second
+  explicit confirmation. Undo and Resume also require confirmation.
+  The import screens use Home Assistant's native progress view.
+
+All PalPulse buttons and status sensors are grouped under the corresponding
+**PalPulse Powerpal** device rather than an Ungrouped section. Existing entity
+unique IDs and statistic IDs are retained. Original migration buttons remain
+for backward compatibility.
+
+**Safety:** This GUI is a wrapper around the same migration coordinator.
+It does not bypass validation, Recorder-inclusive backups, cutover checks,
+recorded progress or protected Undo. Closing a dialog during a running
+migration is not a substitute for Undo. Check the status sensors and use
+Resume if an operation was interrupted. Prefer testing Undo on a restored
+Home Assistant test instance.
+
 ## Historical daily electricity cost import
 
 **This is a separate option from live electricity pricing and from the old
