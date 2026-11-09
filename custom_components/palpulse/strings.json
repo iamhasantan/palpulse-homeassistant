@@ -24,7 +24,9 @@
           "pricing": "Electricity pricing",
           "historical_costs": "Historical daily cost import",
           "energy_history": "Electricity usage history",
-          "cost_history": "Historical electricity costs"
+          "cost_history": "Historical electricity costs",
+          "overview": "Overview and health",
+          "free_hours": "Free electricity hours"
         }
       },
       "flat": {
@@ -168,6 +170,24 @@
       },
       "history_progress": {
         "title": "Processing historical electricity data"
+      },
+      "overview": {
+        "title": "PalPulse status overview",
+        "description": "**Live Powerpal importer:** {energy_status}\n\n**Most recent completed UTC hour (Unix timestamp):** {last_energy_hour}\n\n**Electricity pricing:** {pricing}\n\n**Historical cost source:** {cost_source}\n\n**Historical usage import:** {usage_history}\n\n**Historical cost import:** {cost_history}\n\nFor more detail, open the PalPulse Powerpal device page under Devices & services. This page only reads status; no data is changed."
+      },
+      "free_hours": {
+        "title": "Free electricity hours",
+        "description": "Use these time pickers when the **same free-power window applies every day**. For the older Red Energy Red Power5 offer, the commonly configured window is 11:00 am to 4:00 pm with up to 15 kWh free daily. Confirm your actual plan and rate on your bill. This screen preserves your existing peak and shoulder schedules. To configure different weekday/weekend free windows, use the advanced Time of Use pricing screen.",
+        "data": {
+          "free_start": "Free electricity begins",
+          "free_end": "Free electricity ends",
+          "daily_free_cap_kwh": "Free electricity allowance per day",
+          "free_excess_cents_per_kwh": "Rate after the free allowance"
+        },
+        "data_description": {
+          "daily_free_cap_kwh": "Enter 0 only if your offer provides unlimited free usage in this window.",
+          "free_excess_cents_per_kwh": "Enter the rate in cents per kWh specified by your retailer for usage after the free allowance. Verify the bill; no rate is assumed."
+        }
       }
     },
     "error": {
@@ -185,7 +205,9 @@
       "preview_unavailable": "Preview is unavailable: {message}",
       "preview_complete": "The read-only preview has finished. No data was imported.",
       "history_finished": "Historical operation completed. {message}",
-      "history_failed": "Historical operation stopped: {message}"
+      "history_failed": "Historical operation stopped: {message}",
+      "enable_tou_first": "Choose a custom time-of-use electricity tariff first. Then return to this screen to configure free electricity with time pickers.",
+      "overview_complete": "Status overview closed. No configuration was changed."
     },
     "progress": {
       "processing_history": "Backing up, processing and verifying {operation}. You can also monitor the PalPulse migration status and progress sensors."
