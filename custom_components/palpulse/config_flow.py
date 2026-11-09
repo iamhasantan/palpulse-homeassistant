@@ -336,13 +336,29 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_cost_history(self, user_input=None):
-        """Cost migration has its own preview, status, import and undo."""
+        """Present the cost source first, before any import controls."""
+        manager = self._history_manager("cost")
         return self.async_show_menu(
             step_id="cost_history",
             menu_options=[
-                "cost_preview", "cost_import", "cost_resume", "cost_undo",
+                "cost_source_setup", "cost_preview", "cost_import",
+                "cost_resume", "cost_undo",
             ],
+            description_placeholders={
+                "source": (
+                    manager.source_id or "Not configured"
+                    if manager is not None else "Unavailable"
+                ),
+                "status": (
+                    manager.progress["stage"] if manager is not None
+                    else "Unavailable"
+                ),
+            },
         )
+
+    async def async_step_cost_source_setup(self, user_input=None):
+        """Open the picker from within Historical electricity costs."""
+        return await self.async_step_historical_costs(user_input)
 
     def _preview_summary(self, manager) -> dict[str, str]:
         """Short readable fields instead of raw Recorder JSON or entity IDs."""
@@ -384,6 +400,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return await self._show_history_preview("energy", user_input)
 
     async def async_step_cost_preview(self, user_input=None):
+        manager = self._history_manager("cost")
+        # Avoid an unhelpful persistent notification for the common first-run
+        # situation. Keep the original safe button behaviour unchanged.
+        if manager is not None and not manager.source_id:
+            return await self.async_step_historical_costs()
         return await self._show_history_preview("cost", user_input)
 
     async def _confirm_history_action(self, kind: str, action: str, user_input):
