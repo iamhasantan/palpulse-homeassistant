@@ -20,6 +20,7 @@ from .pricing import (
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
     WINDOW_FIELDS, MODE_HOME_ASSISTANT, MODE_FLAT, MODE_TOU,
     validate_pricing, CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS,
+    CONF_WEEKDAY_FREE, CONF_WEEKEND_FREE,
 )
 
 
@@ -78,7 +79,225 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["overview", "pricing", "free_hours", "historical_costs", "energy_history", "cost_history"],
+            menu_options=["wizard", "overview", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
+        )
+
+    async def async_step_wizard(self, user_input=None):
+        """Begin a step-by-step setup without touching Recorder or imports."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="wizard",
+                data_schema=vol.Schema({
+                    vol.Required("setup_goal"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=[
+                            {"value": "red_power5", "label": "Red Energy Power5 (11 am-4 pm, 15 kWh cap)"},
+                            {"value": "flat", "label": "Australian flat electricity rate"},
+                            {"value": "tou", "label": "Custom time-of-use / free power"},
+                            {"value": "ha", "label": "Home Assistant native pricing"},
+                            {"value": "old_costs", "label": "Connect previous historical costs only"},
+                        ])
+                    )
+                }),
+            )
+        goal = user_input["setup_goal"]
+        self._wizard_active = True
+        self._wizard_pending = dict(self.config_entry.options)
+        if goal == "red_power5":
+            return await self.async_step_wizard_red_power5()
+        if goal == "flat":
+            return await self.async_step_flat()
+        if goal == "tou":
+            return await self.async_step_time_of_use()
+        if goal == "ha":
+            self._wizard_pending[CONF_PRICING_MODE] = MODE_HOME_ASSISTANT
+            return await self.async_step_wizard_cost_choice()
+        if goal == "old_costs":
+            return await self.async_step_wizard_cost_choice()
+        return self.async_abort(reason="wizard_unavailable")
+
+    async def async_step_wizard_red_power5(self, user_input=None):
+        """Preset only known Power5 window/cap; never guess paid rates."""
+        prior = self.config_entry.options
+        rate_keys = (
+            CONF_PEAK_CENTS,
+            CONF_SHOULDER_CENTS,
+            CONF_OFFPEAK_CENTS,
+            CONF_SUPPLY_CENTS,
+            CONF_FREE_EXCESS_CENTS,
+        )
+        if user_input is not None:
+            options = {
+                **prior,
+                CONF_PRICING_MODE: MODE_TOU,
+                CONF_WEEKDAY_FREE: (
+                    f"{str(user_input['free_start'])[:5]}-"
+                    f"{str(user_input['free_end'])[:5]}"
+                ),
+                CONF_WEEKEND_FREE: (
+                    f"{str(user_input['free_start'])[:5]}-"
+                    f"{str(user_input['free_end'])[:5]}"
+                ),
+                CONF_FREE_CAP_KWH: user_input[CONF_FREE_CAP_KWH],
+                **{key: user_input[key] for key in rate_keys},
+            }
+            try:
+                validate_pricing(options)
+            except (ValueError, TypeError):
+                errors = {"base": "invalid_pricing"}
+            else:
+                self._wizard_pending = options
+                return await self.async_step_wizard_cost_choice()
+        else:
+            errors = {}
+        fields = {}
+        for key in rate_keys:
+            marker = (
+                vol.Required(key, default=prior[key])
+                if key in prior else vol.Required(key)
+            )
+            fields[marker] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="c/kWh" if key != CONF_SUPPLY_CENTS else "c/day",
+                )
+            )
+        fields[vol.Required("free_start", default="11:00")] = selector.TimeSelector()
+        fields[vol.Required("free_end", default="16:00")] = selector.TimeSelector()
+        fields[vol.Required(CONF_FREE_CAP_KWH, default=prior.get(CONF_FREE_CAP_KWH, 15))] = (
+            selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX, unit_of_measurement="kWh",
+                )
+            )
+        )
+        return self.async_show_form(
+            step_id="wizard_red_power5", data_schema=vol.Schema(fields),
+            errors=errors,
+        )
+
+    async def async_step_wizard_cost_choice(self, user_input=None):
+        """Optionally connect a recorded historical monetary source."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="wizard_cost_choice",
+                data_schema=vol.Schema({
+                    vol.Required("configure_old_costs", default=False): bool,
+                }),
+            )
+        if not user_input.get("configure_old_costs", False):
+            return await self.async_step_wizard_review()
+        return await self.async_step_wizard_cost_type()
+
+    async def async_step_wizard_cost_type(self, user_input=None):
+        if user_input is None:
+            return self.async_show_form(
+                step_id="wizard_cost_type",
+                data_schema=vol.Schema({
+                    vol.Required(
+                        CONF_LEGACY_COST_SOURCE_MODE,
+                        default=self.config_entry.options.get(
+                            CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=[
+                            {"value": kind, "label": name}
+                            for kind, name in _SOURCE_CHOICES.items()
+                        ])
+                    ),
+                }),
+            )
+        mode = user_input[CONF_LEGACY_COST_SOURCE_MODE]
+        if mode not in _SOURCE_CHOICES:
+            return self.async_abort(reason="wizard_unavailable")
+        self._wizard_cost_mode = mode
+        return await self.async_step_wizard_cost_picker()
+
+    async def async_step_wizard_cost_picker(self, user_input=None):
+        mode = getattr(self, "_wizard_cost_mode", None)
+        if mode not in _SOURCE_CHOICES:
+            return self.async_abort(reason="wizard_unavailable")
+        errors = {}
+        if user_input is not None:
+            source = str(user_input.get(CONF_LEGACY_COST_STATISTIC_ID) or "").strip()
+            if not source:
+                errors["base"] = "source_required"
+            elif error := self._save_cost_source(source, mode):
+                errors["base"] = error
+            else:
+                self._wizard_pending[CONF_LEGACY_COST_STATISTIC_ID] = source
+                self._wizard_pending[CONF_LEGACY_COST_SOURCE_MODE] = mode
+                return await self.async_step_wizard_review()
+        pick = (
+            selector.StatisticSelector()
+            if mode == SOURCE_CUMULATIVE else
+            selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+        )
+        return self.async_show_form(
+            step_id="wizard_cost_picker",
+            data_schema=vol.Schema({
+                vol.Required(CONF_LEGACY_COST_STATISTIC_ID): pick,
+            }),
+            errors=errors,
+        )
+
+    async def async_step_wizard_review(self, user_input=None):
+        """Single deliberate save. Preview never imports historical rows."""
+        pending = getattr(self, "_wizard_pending", None)
+        if pending is None:
+            return self.async_abort(reason="wizard_unavailable")
+        if user_input is not None:
+            if user_input.get("confirm_save") is True:
+                return self.async_create_entry(data=pending)
+            errors = {"base": "confirmation_required"}
+        else:
+            errors = {}
+        mode = pending.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT)
+        is_tou = mode == MODE_TOU
+        free = pending.get(CONF_WEEKDAY_FREE, "None") if is_tou else "None"
+        def showing(key: str, applicable: bool = True) -> str:
+            return str(pending.get(key, "Not configured")) if applicable else "Not applicable"
+        return self.async_show_form(
+            step_id="wizard_review",
+            data_schema=vol.Schema({
+                vol.Required("confirm_save", default=False): bool,
+            }),
+            errors=errors,
+            description_placeholders={
+                "pricing": _PRICING_CHOICES.get(mode, mode),
+                "free_hours": str(free),
+                "free_cap": showing(CONF_FREE_CAP_KWH, is_tou),
+                "peak": showing(CONF_PEAK_CENTS, is_tou),
+                "shoulder": showing(CONF_SHOULDER_CENTS, is_tou),
+                "offpeak": showing(CONF_OFFPEAK_CENTS, is_tou),
+                "flat": showing(CONF_FLAT_CENTS, mode == MODE_FLAT),
+                "supply": showing(CONF_SUPPLY_CENTS, mode != MODE_HOME_ASSISTANT),
+                "excess": showing(CONF_FREE_EXCESS_CENTS, is_tou),
+                "cost_source": str(pending.get(
+                    CONF_LEGACY_COST_STATISTIC_ID, "Not configured"
+                ) or "Not configured"),
+            },
+        )
+
+    async def async_step_dashboard(self, user_input=None):
+        """Guide optional Lovelace import without editing HA dashboards."""
+        if user_input is not None:
+            return self.async_abort(reason="dashboard_guide_complete")
+        meter = self.config_entry.data[CONF_METER_MAC]
+        return self.async_show_form(
+            step_id="dashboard",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "dashboard_url": (
+                    "https://github.com/iamhasantan/palpulse-homeassistant/"
+                    "blob/main/dashboards/palpulse-control-centre.yaml"
+                ),
+                "meter": meter,
+                "energy_statistic": f"palpulse:powerpal_{meter}_energy",
+                "cost_statistic": f"palpulse:powerpal_{meter}_cost",
+            },
+            last_step=True,
         )
 
     async def async_step_overview(self, user_input=None):
@@ -336,13 +555,29 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_cost_history(self, user_input=None):
-        """Cost migration has its own preview, status, import and undo."""
+        """Present the cost source first, before any import controls."""
+        manager = self._history_manager("cost")
         return self.async_show_menu(
             step_id="cost_history",
             menu_options=[
-                "cost_preview", "cost_import", "cost_resume", "cost_undo",
+                "cost_source_setup", "cost_preview", "cost_import",
+                "cost_resume", "cost_undo",
             ],
+            description_placeholders={
+                "source": (
+                    manager.source_id or "Not configured"
+                    if manager is not None else "Unavailable"
+                ),
+                "status": (
+                    manager.progress["stage"] if manager is not None
+                    else "Unavailable"
+                ),
+            },
         )
+
+    async def async_step_cost_source_setup(self, user_input=None):
+        """Open the picker from within Historical electricity costs."""
+        return await self.async_step_historical_costs(user_input)
 
     def _preview_summary(self, manager) -> dict[str, str]:
         """Short readable fields instead of raw Recorder JSON or entity IDs."""
@@ -384,6 +619,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return await self._show_history_preview("energy", user_input)
 
     async def async_step_cost_preview(self, user_input=None):
+        manager = self._history_manager("cost")
+        # Avoid an unhelpful persistent notification for the common first-run
+        # situation. Keep the original safe button behaviour unchanged.
+        if manager is not None and not manager.source_id:
+            return await self.async_step_historical_costs()
         return await self._show_history_preview("cost", user_input)
 
     async def _confirm_history_action(self, kind: str, action: str, user_input):
@@ -497,6 +737,9 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["base"] = "invalid_pricing"
             else:
+                if getattr(self, "_wizard_active", False):
+                    self._wizard_pending = options
+                    return await self.async_step_wizard_cost_choice()
                 return self.async_create_entry(data=options)
         prior = self.config_entry.options
         schema = vol.Schema({
@@ -521,6 +764,9 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["base"] = "invalid_pricing"
             else:
+                if getattr(self, "_wizard_active", False):
+                    self._wizard_pending = options
+                    return await self.async_step_wizard_cost_choice()
                 return self.async_create_entry(data=options)
         prior = self.config_entry.options
         schema_fields = {

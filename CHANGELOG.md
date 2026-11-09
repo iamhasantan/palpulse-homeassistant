@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+## 0.1.0b13
+
+### What's Changed
+
+- Guide first-time users to choose a historical cost source before Preview,
+  instead of showing a confusing persistent-notification error.
+- Add a native Home Assistant **Guided setup wizard** for Red Energy Power5,
+  Australian flat rates, custom time-of-use or HA native pricing.
+- Suggest the known Red Power5 daily free-power window and cap, while requiring
+  paid rates and supply charge from the user's current bill. All values are
+  reviewed before saving.
+- Offer a separate optional old-cost-source selection with a visual
+  cumulative-statistics or daily-reset sensor picker, without starting Import.
+- Add a **PalPulse dashboard setup** options page with personalised statistic
+  IDs and a linked Lovelace YAML template.
+- Include an optional three-view **PalPulse Control Centre** dashboard using
+  built-in HA statistic, graph, entity and gauge cards. No extra HACS frontend
+  component or unstable programmatic dashboard writes.
+- Keep Import, Resume and Undo off the dashboard and preserve the existing
+  preview, confirmation, Recorder backup, cutover and recovery safeguards.
+- Retain all beta 12 entity IDs, energy/cost Recorder statistics and historic
+  migration journals.
+
+### Notes and precautions
+
+- This is still experimental software. Historical monetary values must be
+  reviewed against actual Red Energy bills, not assumed correct.
+- The Lovelace dashboard is an **optional one-time manual import**. Follow
+  Configure > PalPulse dashboard setup; no existing dashboards are overwritten.
+- The configuration wizard does not import any historical rows. Use the
+  separate cost migration Preview before considering any Import.
+- Live HA 2026.11 GUI, dashboard and cost import/recovery verification are
+  still required on a test instance before using mutation actions in production.
+
+### GUI cost-source onboarding
+
+- Show the selected historical cost source and migration status at the top of
+  the **Historical electricity costs** menu.
+- Put **Choose your previous cost source** first, ahead of Preview and Import.
+- Redirect first-run cost Preview into Home Assistant's visual source-selection
+  wizard when no old cost source has been configured, rather than producing a
+  persistent notification.
+- Correct the legacy button's message with the actual Home Assistant
+  **Devices & services > Integrations > PalPulse > Configure** navigation.
+- Keep import/undo confirmation, backup checks and recorder history unchanged.
+
 ## 0.1.0b12
 
 ### What's Changed

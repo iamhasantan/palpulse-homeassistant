@@ -104,9 +104,11 @@ class LegacyCostMigration(LegacyMigration):
     async def _plan(self):
         if not self.source_id:
             raise MigrationValidationError(
-                "No previous cost statistic configured. Open PalPulse "
-                "> Configure > Historical cost import and choose the source "
-                "before previewing. Nothing has been changed"
+                "No historical electricity cost source selected. Go to "
+                "Settings > Devices & services > Integrations > "
+                "PalPulse for Home Assistant > Configure > "
+                "Historical electricity costs > Choose your previous cost "
+                "source, then run Preview"
             )
         if self.source_id == self.target_id:
             raise MigrationValidationError(

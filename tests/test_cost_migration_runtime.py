@@ -116,7 +116,7 @@ class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_blank_source_blocks_preview_without_changes(self):
         self.manager.source_id = ""
         with self.assertRaisesRegex(
-            plan_mod.MigrationValidationError, "No previous cost statistic"
+            plan_mod.MigrationValidationError, "No historical electricity cost source"
         ):
             await self.manager._plan()
 

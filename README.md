@@ -13,11 +13,14 @@ requires an opt-in firmware event sender and real-world validation before use.
 The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
 compatibility metadata they were originally published with.
 
-## Guided Home Assistant interface (next beta)
+## Guided Home Assistant interface
 
 PalPulse uses **native Home Assistant configuration dialogs and selectors**.
 No separate frontend application, manual YAML or external website is required.
-Open **Settings > Devices & services > PalPulse for Home Assistant > Configure**:
+In Home Assistant open **Settings > Devices & services > Integrations**,
+select **PalPulse for Home Assistant**, and click **Configure** on its
+configured meter entry. This is the **integration's** Configure control, not
+the device's Entities page or its Marketplace repository listing:
 
 - **Overview and health** shows live importer status, pricing mode, cost-source
   configuration, and independent historical import statuses.
@@ -47,6 +50,65 @@ recorded progress or protected Undo. Closing a dialog during a running
 migration is not a substitute for Undo. Check the status sensors and use
 Resume if an operation was interrupted. Prefer testing Undo on a restored
 Home Assistant test instance.
+
+## Guided setup wizard and dashboard (0.1.0b13)
+
+Go to **Settings > Devices & services > Integrations > PalPulse for Home
+Assistant > Configure > Guided setup wizard**.
+
+1. Choose a pricing model: **Red Energy Power5**, Australian flat, custom
+   time-of-use, Home Assistant native pricing, or just connect old cost history.
+2. The Red Power5 path suggests free power between 11:00 and 16:00 and the
+   15 kWh daily cap, but **never guesses paid rates**. Enter actual peak,
+   shoulder, off-peak, excess and supply prices from the current bill.
+3. Optionally select a historical cost source from Home Assistant's visual
+   cumulative-statistics or daily-reset sensor picker.
+4. Review all configured prices and explicitly confirm Save. Configuration
+   may reload the integration, but does **not** run historical imports.
+
+For history changes, go through **Configure > Historical electricity costs >
+Choose previous source > Preview**. Review warnings and obtain a verified,
+Recorder-inclusive backup before any Import. The old buttons remain available.
+
+### Optional PalPulse Control Centre dashboard
+
+The release includes a native Lovelace template in the repository file
+dashboards/palpulse-control-centre.yaml.
+
+Open **Configure > PalPulse dashboard setup** for the in-app guide, or:
+
+1. Go to **Settings > Dashboards > Add dashboard > New dashboard from
+   scratch**. Name it *PalPulse Control Centre*.
+2. Open it, choose **Edit dashboard**, then **Raw configuration editor**.
+3. Paste the YAML template. Replace each YOURMAC with your 12-character
+   lower-case Powerpal MAC without colons, and confirm sensor entity IDs
+   against the PalPulse Entities page.
+4. Save. Electricity shows native statistic cards and graphs; History shows
+   migration status/progress; Tariff displays price and supply information.
+
+Dashboard installation is an **optional, one-time manual import**. PalPulse
+does not silently create or overwrite any existing Lovelace dashboard. No
+custom frontend/HACS cards are needed.
+
+Import, Resume and Undo are deliberately excluded from dashboard cards.
+Run those sensitive operations only from the guarded Configure wizard.
+Home Assistant's native statistic cards accept external colon-separated
+PalPulse statistics, even though those are not sensor entities.
+
+## Finding the cost import wizard
+
+In **Settings > Devices & services > Integrations**, open
+**PalPulse for Home Assistant > Configure > Historical electricity costs**.
+The first item, **Choose your previous cost source**, takes you to the
+appropriate Home Assistant selector. It is safe to select a source without
+starting a migration. If you press **Preview** before selecting a source,
+the wizard opens the source setup instead of raising a confusing notification.
+
+The separate legacy button under **Entities** is retained for backward
+compatibility. It still uses Home Assistant notifications for errors and
+preview results. For the clearest experience, use the guided **Configure**
+menu. Newer versions may add an optional Lovelace dashboard for richer
+graphs and panels. The built-in Configure workflow is not a full dashboard.
 
 ## Historical daily electricity cost import
 

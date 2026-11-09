@@ -21,12 +21,14 @@
       "init": {
         "title": "PalPulse settings",
         "menu_options": {
-          "pricing": "Electricity pricing",
-          "historical_costs": "Historical daily cost import",
-          "energy_history": "Electricity usage history",
-          "cost_history": "Historical electricity costs",
+          "wizard": "Guided setup wizard",
           "overview": "Overview and health",
-          "free_hours": "Free electricity hours"
+          "pricing": "Electricity pricing",
+          "free_hours": "Free electricity hours",
+          "historical_costs": "Previous cost history",
+          "cost_history": "Historical electricity costs",
+          "energy_history": "Electricity usage history",
+          "dashboard": "PalPulse dashboard setup"
         }
       },
       "flat": {
@@ -70,7 +72,7 @@
       },
       "historical_costs": {
         "title": "Previous cost history",
-        "description": "First select how your previous electricity cost was recorded. You will choose the actual sensor or cumulative statistic on the next screen. This does not change your electricity tariff.",
+        "description": "Choose how your old electricity costs were recorded. Next you'll select the actual source from a visual Home Assistant picker. A cost-per-kWh price sensor is not historical cost data.",
         "data": {
           "legacy_cost_source_mode": "Previous cost source type"
         },
@@ -104,12 +106,13 @@
       },
       "cost_history": {
         "title": "Historical electricity costs",
-        "description": "Review and manage historical costs separately from energy history and tariff configuration. Import and Undo require verified backups.",
+        "description": "**Previous cost source:** {source}\n\n**Migration status:** {status}\n\nStart with **Choose your previous cost source**. Select a cumulative monetary statistic or a daily-reset cost sensor from Home Assistant's pickers. Then return here for a read-only preview. Import remains optional and requires an independently verified Recorder-inclusive backup.",
         "menu_options": {
-          "cost_preview": "Preview cost history",
-          "cost_import": "Import reviewed costs",
-          "cost_resume": "Resume interrupted cost import",
-          "cost_undo": "Undo imported historical costs"
+          "cost_source_setup": "1. Choose your previous cost source",
+          "cost_preview": "2. Preview historical costs (read only)",
+          "cost_import": "3. Import reviewed costs (backup required)",
+          "cost_resume": "Resume an interrupted import",
+          "cost_undo": "Undo a previous cost import"
         }
       },
       "energy_preview": {
@@ -188,13 +191,67 @@
           "daily_free_cap_kwh": "Enter 0 only if your offer provides unlimited free usage in this window.",
           "free_excess_cents_per_kwh": "Enter the rate in cents per kWh specified by your retailer for usage after the free allowance. Verify the bill; no rate is assumed."
         }
+      },
+      "wizard": {
+        "title": "PalPulse guided setup",
+        "description": "Choose what to configure. Each screen explains the setting, and you review everything before it is saved. **No old energy or cost history is imported by this wizard.** Red Power5 is a convenience preset, not proof of your retailer's current terms.",
+        "data": {
+          "setup_goal": "Choose your electricity plan or setup task"
+        }
+      },
+      "wizard_red_power5": {
+        "title": "Red Energy Power5: confirm actual prices",
+        "description": "The suggested free-power hours are **11:00–16:00 daily** with **15 kWh/day free**. Check that these match your actual Red Energy bill. **Enter all paid rates from your bill.** No paid-rate value has been assumed. This screen keeps existing peak/shoulder schedules, which you can adjust under Electricity pricing.",
+        "data": {
+          "peak_cents_per_kwh": "Peak electricity rate",
+          "shoulder_cents_per_kwh": "Shoulder electricity rate",
+          "offpeak_cents_per_kwh": "Off-peak electricity rate",
+          "daily_supply_cents": "Daily supply fee",
+          "free_excess_cents_per_kwh": "Rate beyond daily free allowance",
+          "free_start": "Free power begins",
+          "free_end": "Free power ends",
+          "daily_free_cap_kwh": "Daily free electricity allowance"
+        }
+      },
+      "wizard_cost_choice": {
+        "title": "Do you want to connect old electricity cost history?",
+        "description": "This step is optional. Connecting a previously recorded cost source **does not import anything**. You can return later through Historical electricity costs. Existing energy history and tariffs remain unchanged.",
+        "data": {
+          "configure_old_costs": "Select an existing historical cost source now"
+        }
+      },
+      "wizard_cost_type": {
+        "title": "How was your old electricity cost recorded?",
+        "description": "A **cumulative** statistic keeps an ever-increasing total. A **daily-reset** sensor starts a new daily total at midnight. Select the appropriate type. Current-price-per-kWh sensors are not historical costs.",
+        "data": {
+          "legacy_cost_source_mode": "Previous cost format"
+        }
+      },
+      "wizard_cost_picker": {
+        "title": "Choose your previous electricity cost source",
+        "description": "Select the actual recorded source from Home Assistant. This step only configures the ID. PalPulse later validates the historical data in a read-only Preview, and will block unsafe imports.",
+        "data": {
+          "legacy_cost_statistic_id": "Previous historical electricity cost"
+        }
+      },
+      "wizard_review": {
+        "title": "Review your PalPulse configuration",
+        "description": "**Pricing:** {pricing}\n\n**Free hours:** {free_hours}\n\n**Daily free allowance:** {free_cap} kWh\n\n**Peak / shoulder / off-peak rates:** {peak} / {shoulder} / {offpeak} c/kWh\n\n**Flat rate (if selected):** {flat} c/kWh\n\n**Paid free-window excess:** {excess} c/kWh\n\n**Supply charge:** {supply} c/day\n\n**Previous cost source:** {cost_source}\n\nReview all amounts against your retailer's actual bill. Saving changes PalPulse configuration and may reload the integration, but **never runs historical Import, Resume or Undo**.",
+        "data": {
+          "confirm_save": "Save these settings after reviewing"
+        }
+      },
+      "dashboard": {
+        "title": "Create your PalPulse Control Centre dashboard",
+        "description": "The dashboard uses **built-in Home Assistant cards**, so no extra HACS frontend component is needed.\n\n1. In Home Assistant, open **Settings > Dashboards > Add dashboard > New dashboard from scratch**. Name it *PalPulse Control Centre*.\n2. Open the new dashboard, choose **Edit > Raw configuration editor**.\n3. Copy the [PalPulse dashboard template]({dashboard_url}) into the editor.\n4. Replace each `YOURMAC` in the template with **{meter}**. Verify the sensor entity IDs under **PalPulse > Entities**, since they may differ by installation.\n5. Save. The dashboard shows energy and cost graphs plus migration progress, and does **not** include dangerous Import or Undo controls.\n\n**Energy statistic:** `{energy_statistic}`\n\n**Cost statistic:** `{cost_statistic}`\n\nThis step will not create or overwrite any existing dashboard. It is an optional one-time manual import to avoid relying on unstable Home Assistant dashboard-management internals."
       }
     },
     "error": {
       "invalid_pricing": "Invalid rate, free allowance or tariff window. Check for overlapping peak/shoulder periods.",
       "invalid_source": "Choose a valid historical cost sensor or statistic other than PalPulse's target cost statistic.",
       "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched.",
-      "confirmation_required": "Tick the confirmation checkbox before any data is changed."
+      "confirmation_required": "Tick the confirmation checkbox before any data is changed.",
+      "source_required": "Select a recorded historical electricity cost source, or return to the previous step and skip this part."
     },
     "abort": {
       "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",
@@ -207,7 +264,9 @@
       "history_finished": "Historical operation completed. {message}",
       "history_failed": "Historical operation stopped: {message}",
       "enable_tou_first": "Choose a custom time-of-use electricity tariff first. Then return to this screen to configure free electricity with time pickers.",
-      "overview_complete": "Status overview closed. No configuration was changed."
+      "overview_complete": "Status overview closed. No configuration was changed.",
+      "wizard_unavailable": "This setup step is unavailable. Restart the PalPulse Configure wizard.",
+      "dashboard_guide_complete": "Dashboard instructions closed. No Home Assistant dashboard or settings were changed."
     },
     "progress": {
       "processing_history": "Backing up, processing and verifying {operation}. You can also monitor the PalPulse migration status and progress sensors."

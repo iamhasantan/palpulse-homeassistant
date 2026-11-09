@@ -1,0 +1,129 @@
+# PalPulse Control Centre - Home Assistant built-in Lovelace dashboard.
+#
+# Installation: Settings > Dashboards > Add dashboard > New dashboard from
+# scratch > Create > Edit dashboard > Raw configuration editor.
+# Paste this file and replace EVERY occurrence of YOURMAC with the lower-case
+# 12-hex-digit Powerpal MAC without colons, e.g. d8a5d6d91964.
+#
+# This template never runs imports. Use PalPulse > Configure for safe
+# Preview / confirmation / backup-first Import, Resume and Undo.
+# If any sensor entity is absent, select the corresponding real ID from
+# Settings > Devices & services > PalPulse > Entities.
+title: PalPulse Control Centre
+views:
+  - title: Electricity
+    path: electricity
+    icon: mdi:lightning-bolt
+    cards:
+      - type: markdown
+        content: |
+          ## PalPulse Control Centre
+          Live Powerpal electricity history and costs.
+          Historical data comes from Recorder statistics, not a fabricated sensor.
+          **Billing is experimental.** Confirm prices and free periods against your retailer.
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: statistic
+            entity: palpulse:powerpal_YOURMAC_energy
+            name: Energy today
+            icon: mdi:lightning-bolt
+            period:
+              calendar:
+                period: day
+            stat_type: change
+          - type: statistic
+            entity: palpulse:powerpal_YOURMAC_cost
+            name: Electricity cost today
+            icon: mdi:cash
+            period:
+              calendar:
+                period: day
+            stat_type: change
+      - type: statistics-graph
+        title: Daily electricity usage
+        entities:
+          - entity: palpulse:powerpal_YOURMAC_energy
+            name: Energy (kWh)
+        period: day
+        days_to_show: 14
+        stat_types:
+          - change
+        chart_type: bar
+      - type: statistics-graph
+        title: Daily electricity usage costs
+        entities:
+          - entity: palpulse:powerpal_YOURMAC_cost
+            name: Usage cost
+        period: day
+        days_to_show: 14
+        stat_types:
+          - change
+        chart_type: bar
+      - type: entities
+        title: Live PalPulse status
+        entities:
+          - entity: sensor.palpulse_live_history_status
+            name: Energy importer
+          - entity: sensor.palpulse_cost_import_status
+            name: Cost importer
+
+  - title: History
+    path: history
+    icon: mdi:database-clock
+    cards:
+      - type: markdown
+        content: |
+          ## Historical imports
+          Inspect status here. To choose a source, Preview, Import,
+          Resume or Undo, use **Settings > Devices & services >
+          Integrations > PalPulse for Home Assistant > Configure**.
+          Never use Import/Undo before checking your full backup.
+      - type: entities
+        title: Powerpal usage history
+        entities:
+          - entity: sensor.palpulse_migration_status
+            name: Usage history status
+          - entity: sensor.palpulse_migration_progress
+            name: Usage history progress
+      - type: gauge
+        entity: sensor.palpulse_migration_progress
+        name: Usage history imported
+        min: 0
+        max: 100
+      - type: entities
+        title: Historical electricity costs
+        entities:
+          - entity: sensor.palpulse_historical_cost_migration_status
+            name: Historical cost status
+          - entity: sensor.palpulse_historical_cost_migration_progress
+            name: Historical cost progress
+      - type: gauge
+        entity: sensor.palpulse_historical_cost_migration_progress
+        name: Cost history imported
+        min: 0
+        max: 100
+
+  - title: Tariff
+    path: tariff
+    icon: mdi:cash-clock
+    cards:
+      - type: markdown
+        content: |
+          ## Your electricity tariff
+          Edit rates and free hours in PalPulse **Configure > Electricity pricing**
+          or the **Setup wizard**. This is an overview only.
+          Your cost statistic is separate from daily supply charges.
+      - type: entities
+        title: Pricing and supply
+        entities:
+          - entity: sensor.palpulse_daily_supply_charge
+            name: Daily supply charge
+          - entity: sensor.palpulse_electricity_unit_price
+            name: Current unit price (only for uncapped tariffs)
+      - type: markdown
+        content: |
+          **Red Energy free power:** For capped tariffs, PalPulse intentionally
+          does not show a misleading instantaneous price entity. Check
+          the daily cost statistic after a complete verified hour instead.
