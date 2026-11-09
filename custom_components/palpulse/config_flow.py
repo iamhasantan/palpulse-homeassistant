@@ -254,7 +254,10 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         else:
             errors = {}
         mode = pending.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT)
-        free = pending.get(CONF_WEEKDAY_FREE, "None")
+        is_tou = mode == MODE_TOU
+        free = pending.get(CONF_WEEKDAY_FREE, "None") if is_tou else "None"
+        def showing(key: str, applicable: bool = True) -> str:
+            return str(pending.get(key, "Not configured")) if applicable else "Not applicable"
         return self.async_show_form(
             step_id="wizard_review",
             data_schema=vol.Schema({
@@ -264,13 +267,13 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             description_placeholders={
                 "pricing": _PRICING_CHOICES.get(mode, mode),
                 "free_hours": str(free),
-                "free_cap": str(pending.get(CONF_FREE_CAP_KWH, "None")),
-                "peak": str(pending.get(CONF_PEAK_CENTS, "Not configured")),
-                "shoulder": str(pending.get(CONF_SHOULDER_CENTS, "Not configured")),
-                "offpeak": str(pending.get(CONF_OFFPEAK_CENTS, "Not configured")),
-                "flat": str(pending.get(CONF_FLAT_CENTS, "Not configured")),
-                "supply": str(pending.get(CONF_SUPPLY_CENTS, "Not configured")),
-                "excess": str(pending.get(CONF_FREE_EXCESS_CENTS, "Not configured")),
+                "free_cap": showing(CONF_FREE_CAP_KWH, is_tou),
+                "peak": showing(CONF_PEAK_CENTS, is_tou),
+                "shoulder": showing(CONF_SHOULDER_CENTS, is_tou),
+                "offpeak": showing(CONF_OFFPEAK_CENTS, is_tou),
+                "flat": showing(CONF_FLAT_CENTS, mode == MODE_FLAT),
+                "supply": showing(CONF_SUPPLY_CENTS, mode != MODE_HOME_ASSISTANT),
+                "excess": showing(CONF_FREE_EXCESS_CENTS, is_tou),
                 "cost_source": str(pending.get(
                     CONF_LEGACY_COST_STATISTIC_ID, "Not configured"
                 ) or "Not configured"),
