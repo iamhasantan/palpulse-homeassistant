@@ -79,7 +79,8 @@
     },
     "error": {
       "invalid_pricing": "Invalid rate, free allowance or tariff window. Check for overlapping peak/shoulder periods.",
-      "invalid_source": "Choose a valid sensor.* or external statistic ID different from the PalPulse cost statistic, or leave it blank."
+      "invalid_source": "Choose a valid sensor.* or external statistic ID different from the PalPulse cost statistic, or leave it blank.",
+      "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched."
     }
   }
 }
