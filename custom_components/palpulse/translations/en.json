@@ -244,6 +244,29 @@
       "dashboard": {
         "title": "Create your PalPulse Control Centre dashboard",
         "description": "The dashboard uses **built-in Home Assistant cards**, so no extra HACS frontend component is needed.\n\n1. In Home Assistant, open **Settings > Dashboards > Add dashboard > New dashboard from scratch**. Name it *PalPulse Control Centre*.\n2. Open the new dashboard, choose **Edit > Raw configuration editor**.\n3. Copy the [PalPulse dashboard template]({dashboard_url}) into the editor.\n4. Replace each `YOURMAC` in the template with **{meter}**. Verify the sensor entity IDs under **PalPulse > Entities**, since they may differ by installation.\n5. Save. The dashboard shows energy and cost graphs plus migration progress, and does **not** include dangerous Import or Undo controls.\n\n**Energy statistic:** `{energy_statistic}`\n\n**Cost statistic:** `{cost_statistic}`\n\nThis step will not create or overwrite any existing dashboard. It is an optional one-time manual import to avoid relying on unstable Home Assistant dashboard-management internals."
+      },
+      "cost_readiness": {
+        "title": "Historical cost import: prerequisites",
+        "description": "**Status:** {status}\n\n**Previous cost history:** `{source}`\n\n**PalPulse live cost statistic:** `{target}`\n\n**Live cost writer:** {writer_status}\n\n{guidance}\n\nThe historical source and the live PalPulse destination are separate. PalPulse cannot establish a safe cutover without verified live cost rows. The screen is read-only. **No data has changed and no backup or import has started.**",
+        "menu_options": {
+          "cost_check_again": "Check Recorder again",
+          "pricing": "Configure electricity pricing",
+          "cost_source_setup": "Change previous cost source",
+          "overview": "Review PalPulse live status",
+          "cost_history": "Back to historical costs",
+          "cost_resume": "Resume an earlier cost import",
+          "cost_undo": "Undo an earlier cost import"
+        }
+      },
+      "cost_preview_blocked": {
+        "title": "Historical cost preview needs attention",
+        "description": "The read-only preview cannot proceed yet:\n\n{message}\n\nChoose an action below. **No cost or energy history has been changed.**",
+        "menu_options": {
+          "cost_check_again": "Check prerequisites and retry",
+          "cost_source_setup": "Choose a different historical source",
+          "overview": "Review live cost status",
+          "cost_history": "Back to historical costs"
+        }
       }
     },
     "error": {
