@@ -95,6 +95,34 @@ Run those sensitive operations only from the guarded Configure wizard.
 Home Assistant's native statistic cards accept external colon-separated
 PalPulse statistics, even though those are not sensor entities.
 
+## Historical cost Preview readiness wizard
+
+From **Settings > Devices & services > Integrations > PalPulse for Home
+Assistant > Configure > Historical electricity costs**, choose
+**Preview historical costs**.
+
+If the old cost source is missing, PalPulse opens its source selector. If the
+source exists but the separate *live PalPulse cost statistic* is missing, the
+wizard now shows **Historical cost import: prerequisites**, with:
+- the selected old cost source and PalPulse cost statistic IDs
+- the live cost-writer status (including the actual blocking error, if any)
+- a clear explanation for the current prerequisite
+- **Check Recorder again**, **Configure electricity pricing**, **Change
+  previous cost source**, **Review PalPulse live status**, and Back
+
+This is **read-only**. PalPulse must receive genuine timestamp-verified full
+hour records and write/verify the cost statistic before it can anchor a safe
+historical cost cutover. It will never create a fabricated cost baseline just
+to allow an import. For capped free windows, a partial hour or a missed period
+may mean waiting for the next local billing day.
+
+If all prerequisites are present, the wizard displays the normal preview.
+A failed preview is shown in an actionable GUI screen instead of a duplicate
+persistent notification. **Import remains separate, explicitly confirmed,
+Recorder-backup protected and reversible via its independent journal.**
+The legacy Entities-page Preview button still uses notifications for
+backward compatibility.
+
 ## Finding the cost import wizard
 
 In **Settings > Devices & services > Integrations**, open
