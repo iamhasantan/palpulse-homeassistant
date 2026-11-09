@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 import voluptuous as vol
@@ -93,16 +95,39 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         cost_source = self.config_entry.options.get(
             CONF_LEGACY_COST_STATISTIC_ID, ""
         )
+        last_stamp = (
+            importer.health["last_completed_utc_hour"] if importer else None
+        )
+        last_hour = (
+            datetime.fromtimestamp(
+                last_stamp, timezone.utc
+            ).astimezone(ZoneInfo(self.hass.config.time_zone)).strftime(
+                "%d %b %Y, %I:%M %p %Z"
+            )
+            if last_stamp is not None else "No complete hour yet"
+        )
+        cost_recorder = self.hass.data.get(f"{DOMAIN}_cost", {}).get(entry_id)
+        cost_state = (
+            cost_recorder.status if cost_recorder else None
+        )
         return self.async_show_form(
             step_id="overview",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "energy_status": importer.health["status"] if importer else "Unavailable",
-                "last_energy_hour": str(
-                    importer.health["last_completed_utc_hour"]
-                ) if importer else "Unavailable",
+                "last_energy_hour": last_hour,
+                "energy_gaps": str(
+                    importer.health["skipped_hours"] if importer else "Unavailable"
+                ),
                 "pricing": _PRICING_CHOICES.get(price_mode, str(price_mode)),
                 "cost_source": str(cost_source or "Not configured"),
+                "cost_status": (
+                    "Error: " + str(cost_state["last_error"])
+                    if cost_state and cost_state["last_error"]
+                    else "Active" if cost_state and cost_state["last_costed_hour"]
+                    else "Waiting" if cost_state
+                    else "Not enabled"
+                ),
                 "usage_history": (
                     energy.progress["stage"] if energy else "Unavailable"
                 ),
