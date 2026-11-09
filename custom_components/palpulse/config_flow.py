@@ -115,11 +115,27 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             elif kind not in _SOURCE_CHOICES:
                 errors["base"] = "invalid_source"
             else:
-                return self.async_create_entry(data={
-                    **self.config_entry.options,
-                    CONF_LEGACY_COST_STATISTIC_ID: source,
-                    CONF_LEGACY_COST_SOURCE_MODE: kind,
-                })
+                manager = self.hass.data.get(
+                    f"{DOMAIN}_cost_migration", {}
+                ).get(self.config_entry.entry_id)
+                old_source = self.config_entry.options.get(
+                    CONF_LEGACY_COST_STATISTIC_ID, ""
+                )
+                old_kind = self.config_entry.options.get(
+                    CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
+                )
+                if (
+                    manager is not None
+                    and manager.journal.get("status") not in {None, "undone"}
+                    and (source != old_source or kind != old_kind)
+                ):
+                    errors["base"] = "migration_locked"
+                else:
+                    return self.async_create_entry(data={
+                        **self.config_entry.options,
+                        CONF_LEGACY_COST_STATISTIC_ID: source,
+                        CONF_LEGACY_COST_SOURCE_MODE: kind,
+                    })
         prior = self.config_entry.options
         schema = vol.Schema({
             vol.Optional(
