@@ -704,7 +704,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             # An interrupted migration must use the clearly marked Resume step.
             return self.async_abort(reason="history_already_started")
         if action == "import" and not getattr(manager, "_preview", None):
-            return await self._show_history_preview(kind, None)
+            return (
+                await self.async_step_cost_preview()
+                if kind == "cost"
+                else await self._show_history_preview(kind, None)
+            )
         if action == "resume" and status not in ("prepared", "applying", "failed"):
             return self.async_abort(reason="nothing_to_resume")
         if action == "undo" and status not in (
