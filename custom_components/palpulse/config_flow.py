@@ -79,7 +79,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -296,6 +296,71 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 "meter": meter,
                 "energy_statistic": f"palpulse:powerpal_{meter}_energy",
                 "cost_statistic": f"palpulse:powerpal_{meter}_cost",
+            },
+            last_step=True,
+        )
+
+    async def async_step_energy_integrity(self, user_input=None):
+        """Read-only diagnosis of Recorder sum discontinuities."""
+        if user_input is not None:
+            return self.async_abort(reason="energy_integrity_reviewed")
+        importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if importer is None:
+            return self.async_abort(reason="history_unavailable")
+        try:
+            report = await importer.async_integrity_report()
+        except Exception as err:
+            return self.async_abort(
+                reason="energy_integrity_unavailable",
+                description_placeholders={"error": str(err)[:400]},
+            )
+        issues = report["issues"]
+        if len(issues) == 1:
+            issue = issues[0]
+            when = datetime.fromtimestamp(
+                issue.hour_start, timezone.utc
+            ).astimezone(ZoneInfo(self.hass.config.time_zone))
+            status = "One large negative Recorder sum jump detected"
+            interval = when.strftime("%d %b %Y %I:%M %p %Z")
+            expected = f"{issue.meter_delta:.6f}"
+            recorded = f"{issue.recorded_delta:.6f}"
+            adjustment = f"{issue.correction:.6f}"
+            guidance = (
+                "A backup and review are required before any correction. "
+                "Home Assistant > Developer Tools > Statistics > "
+                "PalPulse timestamped total energy > Adjust sum > Outliers "
+                "can adjust the displayed hourly CHANGE at this interval. "
+                "Do not use this recommendation if the reported interval "
+                "or adjacent raw meter states differ from your observations."
+            )
+        elif not issues:
+            status = "No very large negative sum jumps found in the recent window"
+            interval = "None"
+            expected = recorded = adjustment = "Not applicable"
+            guidance = (
+                "This only scans recent hourly statistics. A clean result "
+                "does not guarantee all older history is correct."
+            )
+        else:
+            status = f"{len(issues)} large negative sum jumps found"
+            interval = "Multiple intervals"
+            expected = recorded = adjustment = "Requires manual review"
+            guidance = (
+                "Multiple anomalies cannot be repaired using one adjustment. "
+                "Inspect each event and confirm a verified Recorder backup."
+            )
+        return self.async_show_form(
+            step_id="energy_integrity",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "status": status,
+                "interval": interval,
+                "expected_change": expected,
+                "recorded_change": recorded,
+                "required_adjustment": adjustment,
+                "hours_checked": str(report["hour_count"]),
+                "recorder_offset": f'{report["offset"]:.6f}',
+                "guidance": guidance,
             },
             last_step=True,
         )
