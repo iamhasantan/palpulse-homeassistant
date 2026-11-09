@@ -23,7 +23,7 @@ the built-in Marketplace**. The older standalone HACS integration is replaced.
    and add `https://github.com/iamhasantan/palpulse-homeassistant` as an
    **Integration**. Home Assistant 2026.10 and older are not supported by
    builds published with the updated minimum requirement.
-2. Install **PalPulse Historical Energy** after Marketplace/HACS recognises
+2. Install **PalPulse for Home Assistant** after Marketplace/HACS recognises
    the repository. On Home Assistant 2026.11 and later, a **first installation**
    of a config-flow integration can be loaded immediately. **No restart prompt
    is expected**. If you see **Add service**, continue to step 3.
