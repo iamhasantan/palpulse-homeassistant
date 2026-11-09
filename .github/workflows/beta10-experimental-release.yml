@@ -38,7 +38,7 @@ jobs:
           version="$(python -c 'import json; print(json.load(open("custom_components/palpulse/manifest.json"))["version"])')"
           test "$version" = "$EXPECTED" || { echo "::error::Expected $EXPECTED, received $version"; exit 1; }
           awk -v tag="$EXPECTED" '
-            $0 == "## " tag " (experimental, opt-in, review only)" {in_release=1; next}
+            $0 == "## " tag " (experimental, opt-in)" {in_release=1; next}
             in_release && /^## / {exit}
             in_release {print}
           ' CHANGELOG.md > "$RUNNER_TEMP/palpulse-beta10-notes.md"
