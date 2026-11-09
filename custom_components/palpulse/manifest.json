@@ -1,6 +1,6 @@
 {
   "domain": "palpulse",
-  "name": "PalPulse Historical Energy",
+  "name": "PalPulse for Home Assistant",
   "after_dependencies": [
     "esphome"
   ],
@@ -12,6 +12,7 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "backup",
     "recorder"
   ],
   "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
@@ -19,5 +20,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/iamhasantan/palpulse-homeassistant/issues",
   "requirements": [],
-  "version": "0.1.0b3"
+  "version": "0.1.0b11"
 }

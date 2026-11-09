@@ -2,16 +2,85 @@
   "config": {
     "step": {
       "user": {
-        "title": "PalPulse historical energy",
-        "description": "Enter the BLE MAC address of your Powerpal meter. The ESPHome node must emit PalPulse historical record events.",
-        "data": {"meter_mac": "Powerpal BLE MAC address"}
+        "title": "PalPulse for Home Assistant",
+        "description": "Enter the Powerpal BLE MAC address. The ESPHome node must emit PalPulse timestamped record events.",
+        "data": {
+          "meter_mac": "Powerpal BLE MAC address"
+        }
       }
     },
     "error": {
-      "invalid_mac": "Enter a valid MAC address, for example AA:BB:CC:DD:EE:FF."
+      "invalid_mac": "Enter a valid six-byte MAC address (AA:BB:CC:DD:EE:FF)."
     },
     "abort": {
       "already_configured": "This Powerpal meter is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PalPulse settings",
+        "menu_options": {
+          "pricing": "Electricity pricing",
+          "historical_costs": "Historical daily cost import"
+        }
+      },
+      "flat": {
+        "title": "Flat electricity tariff",
+        "description": "Enter your actual electricity rate and optional daily supply fee in cents. Confirm rates against your bill.",
+        "data": {
+          "flat_cents_per_kwh": "Electricity price (c/kWh)",
+          "daily_supply_cents": "Daily supply charge (c/day)"
+        }
+      },
+      "time_of_use": {
+        "title": "Time of use / free power",
+        "description": "Enter your actual peak, shoulder, off-peak and optional free electricity windows. Times follow Home Assistant's local timezone. For Red Power5, verify your free hours and daily allowance against your bill.",
+        "data": {
+          "peak_cents_per_kwh": "Peak (c/kWh)",
+          "shoulder_cents_per_kwh": "Shoulder (c/kWh)",
+          "offpeak_cents_per_kwh": "Off-peak/base rate (c/kWh)",
+          "daily_supply_cents": "Daily supply charge (c/day)",
+          "daily_free_cap_kwh": "Free power allowance (kWh/day, 0 = unlimited)",
+          "free_excess_cents_per_kwh": "Price after free allowance (c/kWh)",
+          "weekday_free": "Weekday free windows",
+          "weekend_free": "Weekend free windows",
+          "weekday_peak": "Weekday peak windows",
+          "weekday_shoulder": "Weekday shoulder windows",
+          "weekend_peak": "Weekend peak windows",
+          "weekend_shoulder": "Weekend shoulder windows"
+        },
+        "data_description": {
+          "weekday_free": "For Red Power5, enter 11:00-16:00",
+          "weekend_free": "For Red Power5, enter 11:00-16:00",
+          "daily_free_cap_kwh": "For Red Power5, enter 15; for Red Midday Power Saver, 24",
+          "free_excess_cents_per_kwh": "Red Power5 previously used 16.412 c/kWh in your local configuration. Verify current bill before use."
+        }
+      },
+      "pricing": {
+        "title": "Electricity pricing",
+        "description": "Use Home Assistant's own pricing (default), or configure Australian flat and time-of-use tariffs in PalPulse.",
+        "data": {
+          "pricing_mode": "Pricing mode"
+        }
+      },
+      "historical_costs": {
+        "title": "Historical daily cost import",
+        "description": "Set up a separate, opt-in import of your previous electricity costs. Choose a cumulative cost statistic or a daily-reset cost sensor with genuine hourly closing states. Preview first. Import requires a verified Home Assistant backup and an existing PalPulse live cost baseline.",
+        "data": {
+          "legacy_cost_statistic_id": "Previous cost statistic ID (optional)",
+          "legacy_cost_source_mode": "Previous cost source type"
+        },
+        "data_description": {
+          "legacy_cost_statistic_id": "For example, sensor.electricity_cost_today. Check that this source has recorded hourly cost states or cumulative sums. A $/kWh price sensor cannot be imported.",
+          "legacy_cost_source_mode": "Choose daily-reset only if the recorded cost resets to zero each local day. Incomplete or ambiguous days are skipped."
+        }
+      }
+    },
+    "error": {
+      "invalid_pricing": "Invalid rate, free allowance or tariff window. Check for overlapping peak/shoulder periods.",
+      "invalid_source": "Choose a valid sensor.* or external statistic ID different from the PalPulse cost statistic, or leave it blank.",
+      "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched."
     }
   }
 }
