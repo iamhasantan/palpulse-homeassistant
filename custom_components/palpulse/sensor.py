@@ -262,7 +262,18 @@ class CostMigrationStatusSensor(MigrationSensor):
 
     @property
     def native_value(self):
+        if not self._manager.source_id:
+            return "Not configured"
         return self._manager.progress["stage"].replace("_", " ").title()
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            **super().extra_state_attributes,
+            "cost_source": self._manager.source_id or None,
+            "cost_source_mode": self._manager.source_mode,
+            "target_cost_statistic": self._manager.target_id,
+        }
 
 
 class CostMigrationProgressSensor(MigrationSensor):
