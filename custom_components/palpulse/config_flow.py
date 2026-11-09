@@ -129,8 +129,14 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             options = {
                 **prior,
                 CONF_PRICING_MODE: MODE_TOU,
-                CONF_WEEKDAY_FREE: f"{user_input['free_start']}-{user_input['free_end']}",
-                CONF_WEEKEND_FREE: f"{user_input['free_start']}-{user_input['free_end']}",
+                CONF_WEEKDAY_FREE: (
+                    f"{str(user_input['free_start'])[:5]}-"
+                    f"{str(user_input['free_end'])[:5]}"
+                ),
+                CONF_WEEKEND_FREE: (
+                    f"{str(user_input['free_start'])[:5]}-"
+                    f"{str(user_input['free_end'])[:5]}"
+                ),
                 CONF_FREE_CAP_KWH: user_input[CONF_FREE_CAP_KWH],
                 **{key: user_input[key] for key in rate_keys},
             }
@@ -259,6 +265,12 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 "pricing": _PRICING_CHOICES.get(mode, mode),
                 "free_hours": str(free),
                 "free_cap": str(pending.get(CONF_FREE_CAP_KWH, "None")),
+                "peak": str(pending.get(CONF_PEAK_CENTS, "Not configured")),
+                "shoulder": str(pending.get(CONF_SHOULDER_CENTS, "Not configured")),
+                "offpeak": str(pending.get(CONF_OFFPEAK_CENTS, "Not configured")),
+                "flat": str(pending.get(CONF_FLAT_CENTS, "Not configured")),
+                "supply": str(pending.get(CONF_SUPPLY_CENTS, "Not configured")),
+                "excess": str(pending.get(CONF_FREE_EXCESS_CENTS, "Not configured")),
                 "cost_source": str(pending.get(
                     CONF_LEGACY_COST_STATISTIC_ID, "Not configured"
                 ) or "Not configured"),
