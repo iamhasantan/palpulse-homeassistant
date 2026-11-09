@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0b11
+
 ### What's Changed
 
 - Expose an independent **Historical daily cost import** configuration menu
@@ -17,6 +19,12 @@
   backup-first cost migration and targeted Undo.
 - Refuse changes to the old cost source while an import journal is active.
 - Document the separate cost import workflow and simplify the README introduction.
+- Correct the Marketplace catalogue integration name in default-branch metadata,
+  keeping **PalPulse for Home Assistant** in the manifest and hacs.json.
+- Preserve the legacy integration-title migration fix from beta 10; this does not
+  change the saved Marketplace device name or existing update entity IDs.
+- Bundle the historical energy migration, Red Energy tariff support, historical
+  monetary cost import and daily-reset conversion into one reviewed release.
 
 ### Important
 
@@ -25,7 +33,8 @@
 - No import is allowed without an existing live PalPulse cost baseline, an
   explicit Preview, and a verified Recorder-inclusive Home Assistant backup.
 - Historical amounts are not recalculated using today's tariff. No migration
-  is started automatically, and no code has been merged into main.
+  is started automatically. This beta includes experimental features and requires
+  live HA validation against Recorder data before using Import.
 
 
 ## 0.1.0b10 (experimental, opt-in)
