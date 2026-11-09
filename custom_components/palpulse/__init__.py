@@ -11,10 +11,14 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
+import math
 import time
 
 from homeassistant.components.recorder.models import StatisticMeanType
-from homeassistant.components.recorder.statistics import async_add_external_statistics
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    statistics_during_period,
+)
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.const import Platform
 from homeassistant.helpers.storage import Store
@@ -134,6 +138,8 @@ class PalPulseImporter:
         self._last_total: int | None = None
         self._halted = False
         self._accounted_pulses: int | None = None
+        self._sum_offset = 0.0
+        self._last_reconciled_at: int | None = None
         self._gap_count = 0
         self._last_gap_hour: int | None = None
         self._blocked_hour: int | None = None
@@ -151,6 +157,8 @@ class PalPulseImporter:
             "last_total": self._last_total,
             "halted": self._halted,
             "accounted_pulses": self._accounted_pulses,
+            "sum_offset": self._sum_offset,
+            "last_reconciled_at": self._last_reconciled_at,
             "gap_count": self._gap_count,
             "last_gap_hour": self._last_gap_hour,
             "blocked_hour": self._blocked_hour,
@@ -177,6 +185,12 @@ class PalPulseImporter:
             self._accounted_pulses = int(state["accounted_pulses"])
         elif self._last_total is not None and self._baseline_pulses is not None:
             self._accounted_pulses = int(self._last_total) - int(self._baseline_pulses)
+        self._sum_offset = float(state.get("sum_offset", 0.0))
+        self._last_reconciled_at = state.get("last_reconciled_at")
+        if not math.isfinite(self._sum_offset):
+            self._halted = True
+            self._sum_offset = 0.0
+            self._status_message = "Invalid saved Recorder sum offset; review required"
         self._gap_count = int(state.get("gap_count", 0))
         self._last_gap_hour = state.get("last_gap_hour")
         self._blocked_hour = state.get("blocked_hour")
@@ -233,6 +247,8 @@ class PalPulseImporter:
             "message": self._status_message,
             "last_import_error": self._last_import_error,
             "statistic_id": self.statistic_id,
+            "sum_offset_kwh": self._sum_offset,
+            "last_sum_reconciliation_utc_hour": self._last_reconciled_at,
         }
 
     def subscribe(self, callback):
@@ -300,6 +316,129 @@ class PalPulseImporter:
                 self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
                 self._notify_health()
 
+    async def _recorder_hour(self, hour_start: int) -> list[dict]:
+        """Read exact committed UTC hour; not an Energy chart aggregate."""
+        start = datetime.fromtimestamp(hour_start, timezone.utc)
+        end = datetime.fromtimestamp(hour_start + HOUR_SECONDS, timezone.utc)
+
+        def read():
+            return statistics_during_period(
+                self.hass, start, end, {self.statistic_id},
+                "hour", {"energy": "kWh"}, {"state", "sum"},
+            ).get(self.statistic_id, [])
+
+        return await self.hass.async_add_executor_job(read)
+
+    async def async_integrity_report(self, lookback_hours: int = 96) -> dict:
+        """Read-only scan for discontinuities in recent energy statistics."""
+        from .energy_integrity import detect_large_energy_resets
+
+        end_stamp = (int(time.time()) // HOUR_SECONDS + 2) * HOUR_SECONDS
+        start_stamp = end_stamp - max(24, min(168, lookback_hours)) * HOUR_SECONDS
+        start = datetime.fromtimestamp(start_stamp, timezone.utc)
+        end = datetime.fromtimestamp(end_stamp, timezone.utc)
+
+        def read():
+            return statistics_during_period(
+                self.hass, start, end, {self.statistic_id},
+                "hour", {"energy": "kWh"}, {"state", "sum"},
+            ).get(self.statistic_id, [])
+
+        rows = await self.hass.async_add_executor_job(read)
+        return {
+            "statistic_id": self.statistic_id,
+            "hour_count": len(rows),
+            "issues": detect_large_energy_resets(rows),
+            "last_completed_hour": self._last_hour,
+            "offset": self._sum_offset,
+        }
+
+    async def _continuity_sum(self, hour) -> float:
+        """Continue from the previous Recorder sum only if the meter state matches.
+
+        Historic import can shift Recorder sums without modifying the Powerpal
+        pulse cursor. We may adopt a sum offset only when the raw meter state
+        agrees, and only for future hourly writes. Never rewrite old rows.
+        """
+        if self._last_hour is None or self._last_total is None:
+            raise ValueError("Missing persisted energy hour")
+        if self._calibration is None or self._accounted_pulses is None:
+            raise ValueError("Missing meter calibration or accounted pulses")
+        previous = await self._recorder_hour(self._last_hour)
+        if len(previous) != 1 or int(previous[0]["start"]) != self._last_hour:
+            raise ValueError(
+                "Recorder last imported energy hour missing or ambiguous. "
+                "Refusing an unsafe new cumulative energy baseline"
+            )
+        recorded_state = float(previous[0]["state"])
+        recorded_sum = float(previous[0]["sum"])
+        expected_state = self._last_total / self._calibration
+        if not all(math.isfinite(x) for x in (recorded_state, recorded_sum)) or (
+            not math.isclose(recorded_state, expected_state, rel_tol=0, abs_tol=1e-5)
+        ):
+            raise ValueError(
+                "Recorder meter state does not match persisted Powerpal cursor; "
+                "stopping energy writes instead of guessing a baseline"
+            )
+        delta = hour.consumption_pulses / self._calibration
+        if not math.isfinite(delta) or delta < 0:
+            raise ValueError("Invalid verified hour consumption")
+        reconciled_offset = recorded_sum - self._accounted_pulses / self._calibration
+        if not math.isclose(reconciled_offset, self._sum_offset, rel_tol=0, abs_tol=1e-5):
+            _LOGGER.warning(
+                "PalPulse Recorder energy sum was rebaselined for meter %s "
+                "at UTC hour %s. Old offset=%s, verified Recorder offset=%s "
+                "kWh. Future hour will follow the verified Recorder sum; "
+                "no historical rows are modified",
+                self.mac, self._last_hour, self._sum_offset, reconciled_offset,
+            )
+            self._sum_offset = reconciled_offset
+            self._last_reconciled_at = self._last_hour
+        new_sum = recorded_sum + delta
+        if not math.isfinite(new_sum) or new_sum < recorded_sum:
+            raise ValueError("Calculated next cumulative energy sum is invalid")
+        return new_sum
+
+    async def _verified_import(self, rows: list[dict]) -> None:
+        """Never overwrite an existing different hourly statistic.
+
+        Home Assistant's external-statistics API upserts matching timestamps.
+        A prior crash can leave an already committed but unjournalled hour.
+        Replaying identical rows is safe; conflicts must stop without a write.
+        """
+        pending = []
+        for row in rows:
+            stamp = int(row["start"].timestamp())
+            stored = await self._recorder_hour(stamp)
+            if stored:
+                if len(stored) != 1 or int(stored[0]["start"]) != stamp or not (
+                    math.isclose(float(stored[0]["state"]), row["state"],
+                                 rel_tol=0, abs_tol=1e-5)
+                    and math.isclose(float(stored[0]["sum"]), row["sum"],
+                                     rel_tol=0, abs_tol=1e-5)
+                ):
+                    raise ValueError(
+                        f"Existing Recorder energy at UTC {stamp} conflicts "
+                        "with Powerpal cursor. Refusing overwrite"
+                    )
+            else:
+                pending.append(row)
+        if pending:
+            await self._import(pending)
+        for row in rows:
+            stamp = int(row["start"].timestamp())
+            saved = await self._recorder_hour(stamp)
+            if len(saved) != 1 or int(saved[0]["start"]) != stamp or not (
+                math.isclose(float(saved[0]["state"]), row["state"],
+                             rel_tol=0, abs_tol=1e-5)
+                and math.isclose(float(saved[0]["sum"]), row["sum"],
+                                 rel_tol=0, abs_tol=1e-5)
+            ):
+                raise ValueError(
+                    f"Recorder did not confirm expected energy hour UTC {stamp}; "
+                    "cursor was not advanced"
+                )
+
     async def _drain(self, now: int) -> None:
         """Import all complete hours, safely passing permanent missing hours.
 
@@ -321,7 +460,7 @@ class PalPulseImporter:
                 if base < 0:
                     continue
                 # Preserve the original first-hour zero baseline semantics.
-                await self._import([
+                await self._verified_import([
                     {"start": datetime.fromtimestamp(start - HOUR_SECONDS, timezone.utc),
                      "state": base / self._calibration, "sum": 0.0},
                     self._statistic(hour, hour.consumption_pulses),
@@ -412,7 +551,10 @@ class PalPulseImporter:
             # Only the 60 proven minutes of THIS hour contribute to the sum.
             # Energy accrued during skipped hours remains intentionally unknown.
             next_accounted = self._accounted_pulses + hour.consumption_pulses
-            await self._import([self._statistic(hour, next_accounted)])
+            recorder_sum = await self._continuity_sum(hour)
+            await self._verified_import([
+                self._statistic(hour, next_accounted, recorder_sum),
+            ])
             if cost_recorder := getattr(self, "cost_recorder", None):
                 await cost_recorder.async_import_verified_hour(
                     hour, self._records, self._calibration
@@ -441,12 +583,14 @@ class PalPulseImporter:
             await self._store.async_save(self._snapshot())
             self._notify_health()
 
-    def _statistic(self, hour, accounted_pulses: int) -> dict:
+    def _statistic(self, hour, accounted_pulses: int,
+                   recorder_sum: float | None = None) -> dict:
         assert self._calibration is not None
         return {
             "start": datetime.fromtimestamp(hour.hour_start, timezone.utc),
             "state": hour.last_total / self._calibration,
-            "sum": accounted_pulses / self._calibration,
+            "sum": (accounted_pulses / self._calibration
+                    if recorder_sum is None else recorder_sum),
         }
 
     async def _import(self, rows: list[dict]) -> None:

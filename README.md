@@ -13,6 +13,54 @@ requires an opt-in firmware event sender and real-world validation before use.
 The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
 compatibility metadata they were originally published with.
 
+## Beta 14: Energy sum continuity and read-only diagnosis
+
+A historical Powerpal migration can leave Home Assistant Recorder's cumulative
+energy sum on a different baseline than the live PalPulse pulse cursor. Before
+beta 14 a new live hour could return to the lower internal baseline and cause
+an impossible negative energy spike.
+
+The beta 14 live writer:
+- Reads the exact prior committed UTC hour directly from Recorder.
+- Verifies its raw meter state against the persisted Powerpal pulse counter.
+- Uses **Recorder's verified sum plus current verified hour pulses**, not the
+  stale local cumulative baseline, for each subsequent hourly write.
+- Logs and persists any verified cumulative baseline adjustment. It never
+  rewrites previous rows simply to reconcile its future cursor.
+- Refuses to overwrite existing conflicting hours, and verifies the saved
+  target row before advancing its durable cursor.
+- Stops writes if the previous raw meter state disagrees or Recorder lacks
+  a trusted previous hour. It does not guess missing electricity usage.
+
+### Investigating an existing negative energy spike
+
+Go to **Settings > Devices & services > Integrations > PalPulse for Home
+Assistant > Configure > Energy history continuity check**. This scans up
+to 96 recent hours and identifies unusually large negative sums when the
+Powerpal meter state rose. It displays the suspect hour, actual measured kWh
+increase, recorded change and candidate cumulative offset. The screen is
+**read-only**, without backup or import actions.
+
+For the observed November 9 2026 2–3 PM Melbourne anomaly, the recorded
+hourly change was -11175.856900 kWh while the meter increased 3.240625 kWh.
+The candidate shift is +11179.097525 kWh.
+
+**Historical repair is manual and opt-in in beta 14.** Merely installing
+the release does not fix or change past Recorder rows. First create and verify
+a full Home Assistant backup including Recorder. Confirm the adjacent
+hourly states and cumulative sums using the read-only
+recorder.get_statistics action. Only if they match, in Home Assistant
+**Developer Tools > Statistics > Adjust sum > Outliers**, select the
+problem hour and enter its **correct hourly change**, not the offset or
+the cumulative lifetime meter reading. Home Assistant's adjustment shifts
+the affected hour and later sums. Verify the following hourly readings before
+trusting the Energy dashboard.
+
+Do not adjust when multiple anomalies appear, a source row is missing,
+the counter has reset, or the actual hour differs. Do not re-import prior
+usage history or remove its migration journal. No automatic historical
+statistic changes are made by this beta.
+
 ## Guided Home Assistant interface
 
 PalPulse uses **native Home Assistant configuration dialogs and selectors**.
@@ -94,6 +142,34 @@ Import, Resume and Undo are deliberately excluded from dashboard cards.
 Run those sensitive operations only from the guarded Configure wizard.
 Home Assistant's native statistic cards accept external colon-separated
 PalPulse statistics, even though those are not sensor entities.
+
+## Historical cost Preview readiness wizard
+
+From **Settings > Devices & services > Integrations > PalPulse for Home
+Assistant > Configure > Historical electricity costs**, choose
+**Preview historical costs**.
+
+If the old cost source is missing, PalPulse opens its source selector. If the
+source exists but the separate *live PalPulse cost statistic* is missing, the
+wizard now shows **Historical cost import: prerequisites**, with:
+- the selected old cost source and PalPulse cost statistic IDs
+- the live cost-writer status (including the actual blocking error, if any)
+- a clear explanation for the current prerequisite
+- **Check Recorder again**, **Configure electricity pricing**, **Change
+  previous cost source**, **Review PalPulse live status**, and Back
+
+This is **read-only**. PalPulse must receive genuine timestamp-verified full
+hour records and write/verify the cost statistic before it can anchor a safe
+historical cost cutover. It will never create a fabricated cost baseline just
+to allow an import. For capped free windows, a partial hour or a missed period
+may mean waiting for the next local billing day.
+
+If all prerequisites are present, the wizard displays the normal preview.
+A failed preview is shown in an actionable GUI screen instead of a duplicate
+persistent notification. **Import remains separate, explicitly confirmed,
+Recorder-backup protected and reversible via its independent journal.**
+The legacy Entities-page Preview button still uses notifications for
+backward compatibility.
 
 ## Finding the cost import wizard
 

@@ -113,6 +113,67 @@ class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             [list(x) for x in plan.hours], second_read
         )
 
+    async def test_readiness_reports_missing_live_target_without_creating_data(self):
+        self.entry.options["pricing_mode"] = "custom_time_of_use"
+        self.hass.data = {
+            "palpulse_cost": {
+                self.entry.entry_id: types.SimpleNamespace(status={
+                    "last_costed_hour": None,
+                    "last_error": None,
+                }),
+            },
+        }
+        self.meta.pop()  # Update the list already held by the mocked Recorder.  # Previous daily cost exists; PalPulse cost is absent.
+        original = [dict(row) for row in self.source]
+        before = dict(self.manager.journal)
+        check = await self.manager.async_readiness()
+        self.assertEqual(check["status"], "waiting_for_cost")
+        self.assertEqual(check["source"], SOURCE)
+        self.assertEqual(check["target"], TARGET)
+        self.assertIn("complete", check["guidance"])
+        self.assertEqual(self.manager.journal, before)
+        self.assertEqual(self.source, original)
+        self.assertEqual(self.reads, [])
+
+    async def test_readiness_points_to_pricing_when_disabled(self):
+        self.meta.pop()  # Update the list already held by the mocked Recorder.
+        self.hass.data = {}
+        result = await self.manager.async_readiness()
+        self.assertEqual(result["status"], "pricing_disabled")
+        self.assertIn("Configure", result["guidance"])
+
+    async def test_readiness_shows_cost_writer_errors_not_fake_success(self):
+        self.entry.options["pricing_mode"] = "custom_time_of_use"
+        self.hass.data = {
+            "palpulse_cost": {
+                self.entry.entry_id: types.SimpleNamespace(status={
+                    "last_costed_hour": None,
+                    "last_error": "Free allowance cannot be established after missing hour",
+                }),
+            },
+        }
+        self.meta.pop()  # Update the list already held by the mocked Recorder.
+        result = await self.manager.async_readiness()
+        self.assertEqual(result["status"], "cost_writer_error")
+        self.assertIn("missing hour", result["guidance"])
+        self.assertNotIn("ready", result["status"])
+
+    async def test_readiness_checks_real_target_rows_before_allowing_preview(self):
+        self.entry.options["pricing_mode"] = "custom_time_of_use"
+        self.hass.data = {
+            "palpulse_cost": {
+                self.entry.entry_id: types.SimpleNamespace(status={
+                    "last_costed_hour": self.cutover,
+                    "last_error": None,
+                }),
+            },
+        }
+        result = await self.manager.async_readiness()
+        self.assertEqual(result["status"], "ready")
+        self.assertIn("2 cost rows", result["guidance"])
+        self.assertEqual(self.manager.journal, {})
+        self.assertEqual(self.reads[0][0], TARGET)
+
     async def test_blank_source_blocks_preview_without_changes(self):
         self.manager.source_id = ""
         with self.assertRaisesRegex(

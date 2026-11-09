@@ -50,13 +50,31 @@ class StatisticMeanType(IntEnum):
 
 ha_models.StatisticMeanType = StatisticMeanType
 RECORDER_IMPORTS = []
+RECORDER_ROWS = {}
+
+
+def statistics_during_period(hass, start, end, statistic_ids, period,
+                             units, types_to_load):
+    rows = [
+        dict(row) for stamp, row in sorted(RECORDER_ROWS.items())
+        if start.timestamp() <= stamp < end.timestamp()
+    ]
+    return {next(iter(statistic_ids)): rows} if rows else {}
 
 
 def async_add_external_statistics(hass, metadata, statistics):
-    RECORDER_IMPORTS.append((metadata, list(statistics)))
+    values = list(statistics)
+    RECORDER_IMPORTS.append((metadata, values))
+    for row in values:
+        RECORDER_ROWS[int(row["start"].timestamp())] = {
+            "start": int(row["start"].timestamp()),
+            "state": row["state"],
+            "sum": row["sum"],
+        }
 
 
 ha_statistics.async_add_external_statistics = async_add_external_statistics
+ha_statistics.statistics_during_period = statistics_during_period
 ha_core.Event = type("Event", (), {})
 ha_core.HomeAssistant = type("HomeAssistant", (), {})
 
@@ -109,8 +127,11 @@ def record_event(timestamp, pulses, total, calibration=CAL):
 class ImporterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         RECORDER_IMPORTS.clear()
+        RECORDER_ROWS.clear()
         FakeStore.VALUES.clear()
-        self.hass = object()
+        self.hass = types.SimpleNamespace(
+            async_add_executor_job=lambda callback: asyncio.to_thread(callback),
+        )
         self.importer = palpulse.PalPulseImporter(self.hass, MAC)
         await self.importer.async_load()
 
@@ -277,6 +298,9 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 stamp = hour + minute * 60
                 legacy["records"][str(stamp)] = [10, base + 10 * (minute + 1)]
         FakeStore.VALUES[f"palpulse_{MAC}"] = legacy
+        RECORDER_ROWS[BASE] = {
+            "start": BASE, "state": 40600 / CAL, "sum": 600 / CAL,
+        }
         self.importer = palpulse.PalPulseImporter(self.hass, MAC)
         await self.importer.async_load()
         self.assertEqual(self.importer._accounted_pulses, 600)
@@ -363,8 +387,68 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(palpulse.time, "time", return_value=BASE + 2 * 3600 + 10):
             self.assertEqual(self.importer.health["status"], "Active")
         self.assertEqual(self.importer._accounted_pulses, 600)
-        self.assertEqual(len(RECORDER_IMPORTS), 2)
-        self.assertEqual(RECORDER_IMPORTS[0][1], RECORDER_IMPORTS[1][1])
+        # The previous write was committed even though acknowledgement failed.
+        # Idempotent retry verifies that row without writing it a second time.
+        self.assertEqual(len(RECORDER_IMPORTS), 1)
+        self.assertEqual(RECORDER_ROWS[BASE]["sum"], 600 / CAL)
+
+    async def test_migrated_recorder_sum_reanchors_future_hours_without_a_negative_spike(self):
+        """Regression for the user's 9 November 2026 ~11,179 kWh reset."""
+        await self.feed_hour(BASE, 40000)
+        first = RECORDER_ROWS[BASE]
+        old_total = first["sum"]
+        migrated_offset = 11179.097525
+        # After historical migration, Recorder's cumulative sum may shift
+        # while the actual raw Powerpal meter state stays exactly unchanged.
+        first["sum"] += migrated_offset
+        await self.feed_hour(BASE + 3600, 40600)
+        second = RECORDER_ROWS[BASE + 3600]
+        self.assertAlmostEqual(second["sum"] - first["sum"], 600 / CAL)
+        self.assertAlmostEqual(
+            second["sum"], migrated_offset + old_total + 600 / CAL
+        )
+        self.assertAlmostEqual(self.importer._sum_offset, migrated_offset)
+        self.assertEqual(self.importer._last_reconciled_at, BASE)
+        self.assertFalse(self.importer._halted)
+        # The reconciled offset survives a restart, and is reverified against
+        # the actual immediately preceding Recorder hour.
+        restored = palpulse.PalPulseImporter(self.hass, MAC)
+        await restored.async_load()
+        self.assertAlmostEqual(restored._sum_offset, migrated_offset)
+        self.importer = restored
+        await self.feed_hour(BASE + 7200, 41200)
+        third = RECORDER_ROWS[BASE + 7200]
+        self.assertAlmostEqual(third["sum"] - second["sum"], 600 / CAL)
+
+    async def test_missing_prior_recorder_row_blocks_new_energy_write(self):
+        await self.feed_hour(BASE, 40000)
+        RECORDER_ROWS.pop(BASE)
+        await self.feed_hour(BASE + 3600, 40600)
+        self.assertEqual(self.importer._last_hour, BASE)
+        self.assertIn("last imported energy hour", self.importer.health["message"])
+        self.assertNotIn(BASE + 3600, RECORDER_ROWS)
+
+    async def test_mismatched_recorder_state_fails_closed(self):
+        await self.feed_hour(BASE, 40000)
+        RECORDER_ROWS[BASE]["state"] += 15
+        await self.feed_hour(BASE + 3600, 40600)
+        self.assertEqual(self.importer._last_hour, BASE)
+        self.assertIn("meter state does not match", self.importer.health["message"])
+        self.assertNotIn(BASE + 3600, RECORDER_ROWS)
+
+    async def test_foreign_conflicting_hour_is_never_overwritten(self):
+        await self.feed_hour(BASE, 40000)
+        previous = RECORDER_ROWS[BASE]
+        RECORDER_ROWS[BASE + 3600] = {
+            "start": BASE + 3600,
+            "state": (41200 / CAL),
+            "sum": previous["sum"] - 5.0,
+        }
+        await self.feed_hour(BASE + 3600, 40600)
+        self.assertEqual(self.importer._last_hour, BASE)
+        self.assertIn("Refusing overwrite", self.importer.health["message"])
+        self.assertEqual(RECORDER_ROWS[BASE + 3600]["sum"],
+                         previous["sum"] - 5.0)
 
     async def test_calibration_change_halts(self):
         await self.feed_hour(BASE, 40000)

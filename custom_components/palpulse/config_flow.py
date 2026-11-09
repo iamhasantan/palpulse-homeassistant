@@ -79,7 +79,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -296,6 +296,71 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 "meter": meter,
                 "energy_statistic": f"palpulse:powerpal_{meter}_energy",
                 "cost_statistic": f"palpulse:powerpal_{meter}_cost",
+            },
+            last_step=True,
+        )
+
+    async def async_step_energy_integrity(self, user_input=None):
+        """Read-only diagnosis of Recorder sum discontinuities."""
+        if user_input is not None:
+            return self.async_abort(reason="energy_integrity_reviewed")
+        importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if importer is None:
+            return self.async_abort(reason="history_unavailable")
+        try:
+            report = await importer.async_integrity_report()
+        except Exception as err:
+            return self.async_abort(
+                reason="energy_integrity_unavailable",
+                description_placeholders={"error": str(err)[:400]},
+            )
+        issues = report["issues"]
+        if len(issues) == 1:
+            issue = issues[0]
+            when = datetime.fromtimestamp(
+                issue.hour_start, timezone.utc
+            ).astimezone(ZoneInfo(self.hass.config.time_zone))
+            status = "One large negative Recorder sum jump detected"
+            interval = when.strftime("%d %b %Y %I:%M %p %Z")
+            expected = f"{issue.meter_delta:.6f}"
+            recorded = f"{issue.recorded_delta:.6f}"
+            adjustment = f"{issue.correction:.6f}"
+            guidance = (
+                "A backup and review are required before any correction. "
+                "Home Assistant > Developer Tools > Statistics > "
+                "PalPulse timestamped total energy > Adjust sum > Outliers "
+                "can adjust the displayed hourly CHANGE at this interval. "
+                "Do not use this recommendation if the reported interval "
+                "or adjacent raw meter states differ from your observations."
+            )
+        elif not issues:
+            status = "No very large negative sum jumps found in the recent window"
+            interval = "None"
+            expected = recorded = adjustment = "Not applicable"
+            guidance = (
+                "This only scans recent hourly statistics. A clean result "
+                "does not guarantee all older history is correct."
+            )
+        else:
+            status = f"{len(issues)} large negative sum jumps found"
+            interval = "Multiple intervals"
+            expected = recorded = adjustment = "Requires manual review"
+            guidance = (
+                "Multiple anomalies cannot be repaired using one adjustment. "
+                "Inspect each event and confirm a verified Recorder backup."
+            )
+        return self.async_show_form(
+            step_id="energy_integrity",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "status": status,
+                "interval": interval,
+                "expected_change": expected,
+                "recorded_change": recorded,
+                "required_adjustment": adjustment,
+                "hours_checked": str(report["hour_count"]),
+                "recorder_offset": f'{report["offset"]:.6f}',
+                "guidance": guidance,
             },
             last_step=True,
         )
@@ -595,8 +660,21 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         if manager is None:
             return self.async_abort(reason="history_unavailable")
         if user_input is None:
-            await manager.async_preview()
+            # Native HA wizard displays preview/error itself. Legacy entity
+            # buttons still publish notifications for backwards compatibility.
+            await manager.async_preview(notify=False)
         if not getattr(manager, "_preview", None):
+            if kind == "cost":
+                return self.async_show_menu(
+                    step_id="cost_preview_blocked",
+                    menu_options=[
+                        "cost_check_again", "cost_source_setup",
+                        "overview", "cost_history",
+                    ],
+                    description_placeholders={
+                        "message": manager.last_message[:1400],
+                    },
+                )
             return self.async_abort(
                 reason="preview_unavailable",
                 description_placeholders={
@@ -619,12 +697,65 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return await self._show_history_preview("energy", user_input)
 
     async def async_step_cost_preview(self, user_input=None):
+        """Guide missing prerequisites rather than aborting a safe preview."""
         manager = self._history_manager("cost")
-        # Avoid an unhelpful persistent notification for the common first-run
-        # situation. Keep the original safe button behaviour unchanged.
-        if manager is not None and not manager.source_id:
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        if not manager.source_id:
             return await self.async_step_historical_costs()
-        return await self._show_history_preview("cost", user_input)
+        if user_input is not None:
+            # Do not invalidate an already-armed preview on form submission.
+            return await self._show_history_preview("cost", user_input)
+        return await self.async_step_cost_readiness()
+
+    async def async_step_cost_readiness(self, user_input=None):
+        """Screen for the distinct legacy source and live target prerequisites."""
+        manager = self._history_manager("cost")
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        info = await manager.async_readiness()
+        state = info["status"]
+        if state == "ready":
+            return await self._show_history_preview("cost", None)
+        if state == "source_missing":
+            return await self.async_step_historical_costs()
+        if state == "previous_import":
+            actions = ["cost_resume", "cost_undo", "cost_history"]
+        elif state == "pricing_disabled":
+            actions = [
+                "pricing", "cost_check_again",
+                "cost_source_setup", "overview", "cost_history",
+            ]
+        else:
+            actions = [
+                "cost_check_again", "cost_source_setup",
+                "pricing", "overview", "cost_history",
+            ]
+        return self.async_show_menu(
+            step_id="cost_readiness",
+            menu_options=actions,
+            description_placeholders={
+                "source": info["source"],
+                "target": info["target"],
+                "status": {
+                    "source_invalid": "Invalid historical source",
+                    "source_not_recorded": "Historical source not recorded",
+                    "pricing_disabled": "Custom pricing not enabled",
+                    "cost_writer_error": "Live cost writer error",
+                    "writer_unavailable": "Cost writer unavailable",
+                    "waiting_for_cost": "Waiting for verified live cost",
+                    "target_invalid": "Invalid PalPulse cost statistic",
+                    "recorder_unavailable": "Recorder unavailable",
+                    "previous_import": "Previous migration detected",
+                }.get(state, state),
+                "writer_status": info["writer_status"],
+                "guidance": info["guidance"][:1400],
+            },
+        )
+
+    async def async_step_cost_check_again(self, user_input=None):
+        """Re-read Recorder. Never generate an artificial cost baseline."""
+        return await self.async_step_cost_readiness()
 
     async def _confirm_history_action(self, kind: str, action: str, user_input):
         """Only explicit confirmation can start a mutating operation."""
@@ -638,7 +769,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             # An interrupted migration must use the clearly marked Resume step.
             return self.async_abort(reason="history_already_started")
         if action == "import" and not getattr(manager, "_preview", None):
-            return await self._show_history_preview(kind, None)
+            return (
+                await self.async_step_cost_preview()
+                if kind == "cost"
+                else await self._show_history_preview(kind, None)
+            )
         if action == "resume" and status not in ("prepared", "applying", "failed"):
             return self.async_abort(reason="nothing_to_resume")
         if action == "undo" and status not in (
