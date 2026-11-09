@@ -204,6 +204,86 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(choose_source["step_id"], "historical_costs")
         self.assertEqual(self.manager.calls, [])
 
+    async def test_wizard_red_power5_requires_paid_rates_and_confirmation(self):
+        """The wizard must not guess actual rates, mutate input or start an import."""
+        initial = dict(self.flow.config_entry.options)
+        start = await self.flow.async_step_wizard()
+        self.assertEqual(start["step_id"], "wizard")
+        red = await self.flow.async_step_wizard({"setup_goal": "red_power5"})
+        self.assertEqual(red["step_id"], "wizard_red_power5")
+        self.assertNotIn("peak_cents_per_kwh", initial)
+        rate_input = {
+            "peak_cents_per_kwh": 41.2,
+            "shoulder_cents_per_kwh": 32.2,
+            "offpeak_cents_per_kwh": 22.8,
+            "daily_supply_cents": 115.4,
+            "free_excess_cents_per_kwh": 16.4,
+            "free_start": "11:00:00",
+            "free_end": "16:00:00",
+            "daily_free_cap_kwh": 15,
+        }
+        next_step = await self.flow.async_step_wizard_red_power5(rate_input)
+        self.assertEqual(next_step["step_id"], "wizard_cost_choice")
+        self.assertEqual(self.flow._wizard_pending["weekday_free"], "11:00-16:00")
+        self.assertEqual(self.flow._wizard_pending["weekend_free"], "11:00-16:00")
+        review = await self.flow.async_step_wizard_cost_choice(
+            {"configure_old_costs": False}
+        )
+        self.assertEqual(review["step_id"], "wizard_review")
+        self.assertEqual(review["description_placeholders"]["peak"], "41.2")
+        self.assertEqual(self.flow.config_entry.options, initial)
+        denied = await self.flow.async_step_wizard_review({"confirm_save": False})
+        self.assertEqual(denied["errors"]["base"], "confirmation_required")
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.cost_manager.calls, [])
+        saved = await self.flow.async_step_wizard_review({"confirm_save": True})
+        self.assertEqual(saved["type"], "create_entry")
+        self.assertEqual(saved["data"]["pricing_mode"], "custom_time_of_use")
+        self.assertEqual(saved["data"]["daily_free_cap_kwh"], 15)
+
+    async def test_wizard_cost_source_selection_is_not_an_import(self):
+        first = await self.flow.async_step_wizard(
+            {"setup_goal": "old_costs"}
+        )
+        self.assertEqual(first["step_id"], "wizard_cost_choice")
+        choose = await self.flow.async_step_wizard_cost_choice(
+            {"configure_old_costs": True}
+        )
+        self.assertEqual(choose["step_id"], "wizard_cost_type")
+        picker = await self.flow.async_step_wizard_cost_type(
+            {"legacy_cost_source_mode": "daily_reset"}
+        )
+        self.assertEqual(picker["step_id"], "wizard_cost_picker")
+        summary = await self.flow.async_step_wizard_cost_picker(
+            {"legacy_cost_statistic_id": "sensor.electricity_cost_today"}
+        )
+        self.assertEqual(summary["step_id"], "wizard_review")
+        saved = await self.flow.async_step_wizard_review({"confirm_save": True})
+        self.assertEqual(
+            saved["data"]["legacy_cost_statistic_id"],
+            "sensor.electricity_cost_today",
+        )
+        self.assertEqual(saved["data"]["legacy_cost_source_mode"], "daily_reset")
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.cost_manager.calls, [])
+
+    async def test_dashboard_guide_does_not_modify_dashboard_or_recorder(self):
+        page = await self.flow.async_step_dashboard()
+        self.assertEqual(page["step_id"], "dashboard")
+        self.assertEqual(
+            page["description_placeholders"]["energy_statistic"],
+            "palpulse:powerpal_d8a5d6d91964_energy",
+        )
+        content = (
+            ROOT / "dashboards" / "palpulse-control-centre.yaml"
+        ).read_text()
+        self.assertIn("YOURMAC", content)
+        self.assertIn("statistics-graph", content)
+        self.assertNotIn("button.import_old", content)
+        self.assertNotIn("button.undo", content)
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.cost_manager.calls, [])
+
     async def test_cost_source_keeps_pricing_and_locks_active_journal(self):
         self.cost_manager.journal = {"status": "applied"}
         self.flow.config_entry.options.update({
