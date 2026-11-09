@@ -35,9 +35,9 @@ def daily_rows(day):
 
 class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.source = daily_rows(date(2026, 11, 8))
-        self.source += daily_rows(date(2026, 11, 9))
-        self.cutover = daily_rows(date(2026, 11, 10))[0]["start"]
+        self.source = daily_rows(date(2026, 11, 5))
+        self.source += daily_rows(date(2026, 11, 6))
+        self.cutover = daily_rows(date(2026, 11, 7))[0]["start"]
         self.target = [
             {"start": self.cutover, "state": 0.0, "sum": 0.0},
             {"start": self.cutover + HOUR, "state": 0.25, "sum": 0.25},
