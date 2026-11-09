@@ -123,7 +123,7 @@ class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 }),
             },
         }
-        self.meta = self.meta[:1]  # Previous daily cost exists; PalPulse cost is absent.
+        self.meta.pop()  # Update the list already held by the mocked Recorder.  # Previous daily cost exists; PalPulse cost is absent.
         original = [dict(row) for row in self.source]
         before = dict(self.manager.journal)
         check = await self.manager.async_readiness()
@@ -136,7 +136,7 @@ class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.reads, [])
 
     async def test_readiness_points_to_pricing_when_disabled(self):
-        self.meta = self.meta[:1]
+        self.meta.pop()  # Update the list already held by the mocked Recorder.
         self.hass.data = {}
         result = await self.manager.async_readiness()
         self.assertEqual(result["status"], "pricing_disabled")
@@ -152,7 +152,7 @@ class CostMigrationRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 }),
             },
         }
-        self.meta = self.meta[:1]
+        self.meta.pop()  # Update the list already held by the mocked Recorder.
         result = await self.manager.async_readiness()
         self.assertEqual(result["status"], "cost_writer_error")
         self.assertIn("missing hour", result["guidance"])
