@@ -1,9 +1,9 @@
 # PalPulse for Home Assistant
 
-HACS-installable experimental Home Assistant companion for
+PalPulse records Powerpal electricity usage and costs in Home Assistant.
+It imports verified hourly energy statistics and supports optional Australian
+electricity tariffs, including Red Energy free-power periods. It works with
 [PalPulse ESPHome](https://github.com/iamhasantan/palpulse-esphome).
-It receives original timestamped Powerpal BLE records and imports **complete UTC
-hours** into Home Assistant Recorder as a **separate, external energy statistic**.
 
 **Early beta, not billing-grade.** Do not replace your working whole-home energy
 source or select both sources in Home Assistant's Energy dashboard. This importer
@@ -12,6 +12,47 @@ requires an opt-in firmware event sender and real-world validation before use.
 **Compatibility for the next release:** Home Assistant **2026.11.0b2 or newer**.
 The minimum is declared in `hacs.json`. Existing GitHub release tags retain the
 compatibility metadata they were originally published with.
+
+## Historical daily electricity cost import
+
+**This is a separate option from live electricity pricing and from the old
+Powerpal kWh history migration.** Go to **Settings > Devices & services >
+PalPulse for Home Assistant > Configure > Historical daily cost import**.
+
+1. Enter the previous cost statistic ID, for example
+   sensor.electricity_cost_today. That is an example, not a confirmed valid
+   source for your installation.
+2. Choose **Existing cumulative hourly cost statistic** when Recorder
+   already stores genuine lifetime monetary sums. Choose **Daily-reset cost
+   sensor** only when the old sensor's actual hourly state is the running
+   cost for that local calendar day and resets at midnight.
+3. Configure a **Custom flat** or **Custom time-of-use** tariff separately,
+   then wait for PalPulse's own monetary cost statistic to receive its first
+   fully verified live hour. The legacy import never rewrites energy usage.
+4. On the PalPulse integration's **Entities** page, find the dedicated
+   **Preview old daily electricity costs**, **Import old daily electricity
+   costs**, **Resume interrupted daily cost import**, and
+   **Undo historical daily cost import** buttons. These are separate from
+   the four original kWh-history migration buttons.
+5. Press **Preview**. Read the persistent notification, including source
+   format, imported days, missing days, and cutover. Only after reviewing
+   the exact plan, press **Import** within ten minutes. Import and Undo both
+   first create and verify a Recorder-inclusive Home Assistant backup.
+
+For daily-reset sources, the importer only uses genuine recorded **hourly
+closing states**. It rejects price-per-kWh and hourly-mean-only sensors,
+checks for a real midnight reset, respects local DST days with 23 or 25 hours,
+and skips entire days with missing hours or ambiguous within-day decreases.
+No missing cost is estimated, and historic readings are never repriced with
+today's tariff. Recorder data alone does not prove a retailer's final bill.
+Review the preview and compare any imported daily totals with your bill.
+
+The separate source ID and source type can be changed without resetting
+electricity pricing settings. An active or completed cost migration must be
+undone before switching its source, to preserve a consistent recovery journal.
+The original Powerpal statistics and earlier PalPulse kWh migration remain
+unchanged. The cost-import controls can appear before source configuration,
+but Preview will safely explain what is missing.
 
 ## Correcting a persisted old display name
 
