@@ -289,6 +289,10 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             step_id="dashboard",
             data_schema=vol.Schema({}),
             description_placeholders={
+                "dashboard_url": (
+                    "https://github.com/iamhasantan/palpulse-homeassistant/"
+                    "blob/main/dashboards/palpulse-control-centre.yaml"
+                ),
                 "meter": meter,
                 "energy_statistic": f"palpulse:powerpal_{meter}_energy",
                 "cost_statistic": f"palpulse:powerpal_{meter}_cost",
