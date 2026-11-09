@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Historical cost migration readiness wizard
+
+- Replace the missing PalPulse cost statistic dead-end with a native,
+  read-only prerequisites screen showing the old source, live cost statistic,
+  cost writer state and clear next actions.
+- Distinguish an invalid/missing historic source from custom pricing disabled,
+  missing verified live cost rows, and cost recorder errors.
+- Add **Check Recorder again**, **Configure electricity pricing**,
+  **Change previous cost source**, and **Review PalPulse status** actions.
+- Route the Import shortcut through the same preflight and Preview requirements.
+- Suppress duplicate persistent notifications when Preview runs through
+  the native GUI. Legacy entity Preview buttons remain unchanged.
+- Never generate synthetic cost baselines, create historical statistics or
+  run import/backup actions during readiness checks.
+- Add regression tests for pending/ready/bad cost states and GUI retry.
+
 ## 0.1.0b13
 
 ### What's Changed
