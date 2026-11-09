@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### GUI cost-source onboarding
+
+- Show the selected historical cost source and migration status at the top of
+  the **Historical electricity costs** menu.
+- Put **Choose your previous cost source** first, ahead of Preview and Import.
+- Redirect first-run cost Preview into Home Assistant's visual source-selection
+  wizard when no old cost source has been configured, rather than producing a
+  persistent notification.
+- Correct the legacy button's message with the actual Home Assistant
+  **Devices & services > Integrations > PalPulse > Configure** navigation.
+- Keep import/undo confirmation, backup checks and recorder history unchanged.
+
 ## 0.1.0b12
 
 ### What's Changed
