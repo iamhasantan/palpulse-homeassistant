@@ -17,7 +17,10 @@ compatibility metadata they were originally published with.
 
 PalPulse uses **native Home Assistant configuration dialogs and selectors**.
 No separate frontend application, manual YAML or external website is required.
-Open **Settings > Devices & services > PalPulse for Home Assistant > Configure**:
+In Home Assistant open **Settings > Devices & services > Integrations**,
+select **PalPulse for Home Assistant**, and click **Configure** on its
+configured meter entry. This is the **integration's** Configure control, not
+the device's Entities page or its Marketplace repository listing:
 
 - **Overview and health** shows live importer status, pricing mode, cost-source
   configuration, and independent historical import statuses.
@@ -47,6 +50,21 @@ recorded progress or protected Undo. Closing a dialog during a running
 migration is not a substitute for Undo. Check the status sensors and use
 Resume if an operation was interrupted. Prefer testing Undo on a restored
 Home Assistant test instance.
+
+## Finding the cost import wizard
+
+In **Settings > Devices & services > Integrations**, open
+**PalPulse for Home Assistant > Configure > Historical electricity costs**.
+The first item, **Choose your previous cost source**, takes you to the
+appropriate Home Assistant selector. It is safe to select a source without
+starting a migration. If you press **Preview** before selecting a source,
+the wizard opens the source setup instead of raising a confusing notification.
+
+The separate legacy button under **Entities** is retained for backward
+compatibility. It still uses Home Assistant notifications for errors and
+preview results. For the clearest experience, use the guided **Configure**
+menu. Newer versions may add an optional Lovelace dashboard for richer
+graphs and panels. The built-in Configure workflow is not a full dashboard.
 
 ## Historical daily electricity cost import
 
