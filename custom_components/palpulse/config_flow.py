@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import CONF_METER_MAC, DOMAIN
 from .history import normalize_mac
@@ -74,7 +78,126 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["pricing", "historical_costs"],
+            menu_options=["overview", "pricing", "free_hours", "historical_costs", "energy_history", "cost_history"],
+        )
+
+    async def async_step_overview(self, user_input=None):
+        """A read-only summary without forcing the user into entity attributes."""
+        if user_input is not None:
+            return self.async_abort(reason="overview_complete")
+        entry_id = self.config_entry.entry_id
+        importer = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        energy = self._history_manager("energy")
+        costs = self._history_manager("cost")
+        price_mode = self.config_entry.options.get(
+            CONF_PRICING_MODE, MODE_HOME_ASSISTANT
+        )
+        cost_source = self.config_entry.options.get(
+            CONF_LEGACY_COST_STATISTIC_ID, ""
+        )
+        last_stamp = (
+            importer.health["last_completed_utc_hour"] if importer else None
+        )
+        last_hour = (
+            datetime.fromtimestamp(
+                last_stamp, timezone.utc
+            ).astimezone(ZoneInfo(self.hass.config.time_zone)).strftime(
+                "%d %b %Y, %I:%M %p %Z"
+            )
+            if last_stamp is not None else "No complete hour yet"
+        )
+        cost_recorder = self.hass.data.get(f"{DOMAIN}_cost", {}).get(entry_id)
+        cost_state = (
+            cost_recorder.status if cost_recorder else None
+        )
+        return self.async_show_form(
+            step_id="overview",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "energy_status": importer.health["status"] if importer else "Unavailable",
+                "last_energy_hour": last_hour,
+                "energy_gaps": str(
+                    importer.health["skipped_hours"] if importer else "Unavailable"
+                ),
+                "pricing": _PRICING_CHOICES.get(price_mode, str(price_mode)),
+                "cost_source": str(cost_source or "Not configured"),
+                "cost_status": (
+                    "Error: " + str(cost_state["last_error"])
+                    if cost_state and cost_state["last_error"]
+                    else "Active" if cost_state and cost_state["last_costed_hour"]
+                    else "Waiting" if cost_state
+                    else "Not enabled"
+                ),
+                "usage_history": (
+                    energy.progress["stage"] if energy else "Unavailable"
+                ),
+                "cost_history": (
+                    costs.progress["stage"] if costs else "Unavailable"
+                ),
+            },
+            last_step=True,
+        )
+
+    async def async_step_free_hours(self, user_input=None):
+        """Simple time-picker setup for a single daily free-power window.
+
+        Advanced users keep their weekday/weekend/peak settings in the
+        existing time-of-use pricing form.
+        """
+        prior = self.config_entry.options
+        if prior.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_TOU:
+            return self.async_abort(reason="enable_tou_first")
+
+        def window_defaults():
+            # Do not hide conflicting or multi-window advanced configurations.
+            weekday = str(prior.get("weekday_free", "")).strip()
+            weekend = str(prior.get("weekend_free", "")).strip()
+            if weekday and weekday == weekend and weekday.count("-") == 1 and "," not in weekday:
+                return tuple(weekday.split("-", 1))
+            return ("11:00", "16:00")
+
+        start_default, end_default = window_defaults()
+        errors = {}
+        if user_input is not None:
+            start = str(user_input["free_start"])[:5]
+            end = str(user_input["free_end"])[:5]
+            options = {
+                **prior,
+                "weekday_free": f"{start}-{end}",
+                "weekend_free": f"{start}-{end}",
+                CONF_FREE_CAP_KWH: user_input[CONF_FREE_CAP_KWH],
+                CONF_FREE_EXCESS_CENTS: user_input[CONF_FREE_EXCESS_CENTS],
+            }
+            try:
+                validate_pricing(options)
+            except ValueError:
+                errors["base"] = "invalid_pricing"
+            else:
+                return self.async_create_entry(data=options)
+
+        return self.async_show_form(
+            step_id="free_hours",
+            data_schema=vol.Schema({
+                vol.Required("free_start", default=start_default): selector.TimeSelector(),
+                vol.Required("free_end", default=end_default): selector.TimeSelector(),
+                vol.Required(
+                    CONF_FREE_CAP_KWH,
+                    default=prior.get(CONF_FREE_CAP_KWH, 15),
+                ): selector.NumberSelector(selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="kWh",
+                )),
+                vol.Required(
+                    CONF_FREE_EXCESS_CENTS,
+                    default=prior.get(CONF_FREE_EXCESS_CENTS, 0),
+                ): selector.NumberSelector(selector.NumberSelectorConfig(
+                    min=0, max=10000, step="any",
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="c/kWh",
+                )),
+            }),
+            errors=errors,
         )
 
     async def async_step_pricing(self, user_input=None):
@@ -101,58 +224,268 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_historical_costs(self, user_input=None):
-        """Configure historical cost migration without changing live tariffs."""
-        errors = {}
+        """Choose source type first, then pick a named entity/statistic."""
         if user_input is not None:
-            source = user_input.get(CONF_LEGACY_COST_STATISTIC_ID, "").strip()
-            kind = user_input.get(CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE)
-            meter = self.config_entry.data[CONF_METER_MAC]
-            target = f"{DOMAIN}:powerpal_{meter}_cost"
-            if source and (
-                not _SOURCE_ID_RE.fullmatch(source) or source == target
-            ):
-                errors["base"] = "invalid_source"
-            elif kind not in _SOURCE_CHOICES:
-                errors["base"] = "invalid_source"
-            else:
-                manager = self.hass.data.get(
-                    f"{DOMAIN}_cost_migration", {}
-                ).get(self.config_entry.entry_id)
-                old_source = self.config_entry.options.get(
-                    CONF_LEGACY_COST_STATISTIC_ID, ""
-                )
-                old_kind = self.config_entry.options.get(
-                    CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
-                )
-                if (
-                    manager is not None
-                    and manager.journal.get("status") not in {None, "undone"}
-                    and (source != old_source or kind != old_kind)
-                ):
-                    errors["base"] = "migration_locked"
-                else:
-                    return self.async_create_entry(data={
-                        **self.config_entry.options,
-                        CONF_LEGACY_COST_STATISTIC_ID: source,
-                        CONF_LEGACY_COST_SOURCE_MODE: kind,
-                    })
-        prior = self.config_entry.options
-        schema = vol.Schema({
-            vol.Optional(
-                CONF_LEGACY_COST_STATISTIC_ID,
-                default=prior.get(CONF_LEGACY_COST_STATISTIC_ID, ""),
-            ): str,
-            vol.Required(
-                CONF_LEGACY_COST_SOURCE_MODE,
-                default=prior.get(CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE),
-            ): vol.In(_SOURCE_CHOICES),
-        })
+            self._legacy_source_mode = user_input[CONF_LEGACY_COST_SOURCE_MODE]
+            if self._legacy_source_mode == SOURCE_CUMULATIVE:
+                return await self.async_step_cost_source_statistic()
+            return await self.async_step_cost_source_daily()
         return self.async_show_form(
             step_id="historical_costs",
-            data_schema=self.add_suggested_values_to_schema(
-                schema, user_input or prior
-            ),
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_LEGACY_COST_SOURCE_MODE,
+                    default=self.config_entry.options.get(
+                        CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": value, "label": label}
+                            for value, label in _SOURCE_CHOICES.items()
+                        ],
+                    )
+                ),
+            }),
+        )
+
+    def _source_schema(self, field_selector):
+        """The picker may be left empty to clear a migration source."""
+        key = CONF_LEGACY_COST_STATISTIC_ID
+        prior = str(self.config_entry.options.get(key, "")).strip()
+        mode = getattr(self, "_legacy_source_mode", SOURCE_CUMULATIVE)
+        if prior and self.config_entry.options.get(
+            CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
+        ) == mode:
+            marker = vol.Optional(key, default=prior)
+        else:
+            marker = vol.Optional(key)
+        return vol.Schema({marker: field_selector})
+
+    def _save_cost_source(self, source: str, kind: str) -> str | None:
+        """Validate source and journal without changing unrelated tariffs."""
+        meter = self.config_entry.data[CONF_METER_MAC]
+        target = f"{DOMAIN}:powerpal_{meter}_cost"
+        if source and (not _SOURCE_ID_RE.fullmatch(source) or source == target):
+            return "invalid_source"
+        manager = self.hass.data.get(
+            f"{DOMAIN}_cost_migration", {}
+        ).get(self.config_entry.entry_id)
+        previous_source = str(self.config_entry.options.get(
+            CONF_LEGACY_COST_STATISTIC_ID, ""
+        )).strip()
+        previous_kind = self.config_entry.options.get(
+            CONF_LEGACY_COST_SOURCE_MODE, SOURCE_CUMULATIVE
+        )
+        if (
+            manager is not None
+            and manager.journal.get("status") not in {None, "undone"}
+            and (source != previous_source or kind != previous_kind)
+        ):
+            return "migration_locked"
+        return None
+
+    async def _save_source_form(self, step_id, field_selector, user_input):
+        kind = getattr(self, "_legacy_source_mode", SOURCE_CUMULATIVE)
+        errors = {}
+        if user_input is not None:
+            source = str(user_input.get(CONF_LEGACY_COST_STATISTIC_ID) or "").strip()
+            if error := self._save_cost_source(source, kind):
+                errors["base"] = error
+            else:
+                return self.async_create_entry(data={
+                    **self.config_entry.options,
+                    CONF_LEGACY_COST_STATISTIC_ID: source,
+                    CONF_LEGACY_COST_SOURCE_MODE: kind,
+                })
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self._source_schema(field_selector),
             errors=errors,
+        )
+
+    async def async_step_cost_source_statistic(self, user_input=None):
+        """Browse Recorder's actual cumulative statistic identifiers."""
+        return await self._save_source_form(
+            "cost_source_statistic",
+            selector.StatisticSelector(),
+            user_input,
+        )
+
+    async def async_step_cost_source_daily(self, user_input=None):
+        """Browse sensor entities for an existing daily-reset cost sensor."""
+        return await self._save_source_form(
+            "cost_source_daily",
+            selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor")
+            ),
+            user_input,
+        )
+
+    def _history_manager(self, kind: str):
+        key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
+        return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
+
+    async def async_step_energy_history(self, user_input=None):
+        """Guided workflow, separate from tariff configuration."""
+        return self.async_show_menu(
+            step_id="energy_history",
+            menu_options=[
+                "energy_preview", "energy_import", "energy_resume", "energy_undo",
+            ],
+        )
+
+    async def async_step_cost_history(self, user_input=None):
+        """Cost migration has its own preview, status, import and undo."""
+        return self.async_show_menu(
+            step_id="cost_history",
+            menu_options=[
+                "cost_preview", "cost_import", "cost_resume", "cost_undo",
+            ],
+        )
+
+    def _preview_summary(self, manager) -> dict[str, str]:
+        """Short readable fields instead of raw Recorder JSON or entity IDs."""
+        plan = getattr(manager, "_preview", None)
+        return {
+            "source": manager.source_id or "Not configured",
+            "target": manager.target_id,
+            "rows": f"{plan.count:,}" if plan else "0",
+            "gaps": str(plan.gaps) if plan else "0",
+            "message": manager.last_message[:1600],
+        }
+
+    async def _show_history_preview(self, kind: str, user_input):
+        manager = self._history_manager(kind)
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        if user_input is None:
+            await manager.async_preview()
+        if not getattr(manager, "_preview", None):
+            return self.async_abort(
+                reason="preview_unavailable",
+                description_placeholders={
+                    "message": manager.last_message[:1400],
+                },
+            )
+        if user_input is not None:
+            if user_input.get("continue_to_import") is True:
+                return await self._confirm_history_action(kind, "import", None)
+            return self.async_abort(reason="preview_complete")
+        return self.async_show_form(
+            step_id=f"{kind}_preview",
+            data_schema=vol.Schema({
+                vol.Required("continue_to_import", default=False): bool,
+            }),
+            description_placeholders=self._preview_summary(manager),
+        )
+
+    async def async_step_energy_preview(self, user_input=None):
+        return await self._show_history_preview("energy", user_input)
+
+    async def async_step_cost_preview(self, user_input=None):
+        return await self._show_history_preview("cost", user_input)
+
+    async def _confirm_history_action(self, kind: str, action: str, user_input):
+        """Only explicit confirmation can start a mutating operation."""
+        manager = self._history_manager(kind)
+        if manager is None:
+            return self.async_abort(reason="history_unavailable")
+        if manager.busy:
+            return self.async_abort(reason="history_busy")
+        status = manager.journal.get("status")
+        if action == "import" and status not in (None, "undone"):
+            # An interrupted migration must use the clearly marked Resume step.
+            return self.async_abort(reason="history_already_started")
+        if action == "import" and not getattr(manager, "_preview", None):
+            return await self._show_history_preview(kind, None)
+        if action == "resume" and status not in ("prepared", "applying", "failed"):
+            return self.async_abort(reason="nothing_to_resume")
+        if action == "undo" and status not in (
+            "prepared", "applying", "applied", "failed", "undoing"
+        ):
+            return self.async_abort(reason="nothing_to_undo")
+        if user_input is not None:
+            if user_input.get("confirm_action") is not True:
+                return self.async_show_form(
+                    step_id=f"{kind}_{action}",
+                    data_schema=vol.Schema({
+                        vol.Required("confirm_action", default=False): bool,
+                    }),
+                    errors={"base": "confirmation_required"},
+                    description_placeholders=self._preview_summary(manager),
+                )
+            self._operation_manager = manager
+            self._operation_kind = kind
+            self._operation_action = action
+            coroutine = {
+                "import": manager.async_migrate,
+                "resume": manager.async_resume,
+                "undo": manager.async_undo,
+            }[action]()
+            self._operation_task = self.hass.async_create_task(coroutine)
+            return await self.async_step_history_progress()
+        return self.async_show_form(
+            step_id=f"{kind}_{action}",
+            data_schema=vol.Schema({
+                vol.Required("confirm_action", default=False): bool,
+            }),
+            description_placeholders=self._preview_summary(manager),
+        )
+
+    async def async_step_energy_import(self, user_input=None):
+        return await self._confirm_history_action("energy", "import", user_input)
+
+    async def async_step_cost_import(self, user_input=None):
+        return await self._confirm_history_action("cost", "import", user_input)
+
+    async def async_step_energy_resume(self, user_input=None):
+        return await self._confirm_history_action("energy", "resume", user_input)
+
+    async def async_step_cost_resume(self, user_input=None):
+        return await self._confirm_history_action("cost", "resume", user_input)
+
+    async def async_step_energy_undo(self, user_input=None):
+        return await self._confirm_history_action("energy", "undo", user_input)
+
+    async def async_step_cost_undo(self, user_input=None):
+        return await self._confirm_history_action("cost", "undo", user_input)
+
+    async def async_step_history_progress(self, user_input=None):
+        """Native HA progress screen for the backup, import or undo."""
+        task = getattr(self, "_operation_task", None)
+        if task is None:
+            return self.async_abort(reason="history_unavailable")
+        if not task.done():
+            return self.async_show_progress(
+                step_id="history_progress",
+                progress_action="processing_history",
+                progress_task=task,
+                description_placeholders={
+                    "operation": self._operation_action,
+                },
+            )
+        try:
+            task.result()
+        except Exception as err:
+            self._operation_error = str(err)
+            return self.async_show_progress_done(next_step_id="history_failed")
+        return self.async_show_progress_done(next_step_id="history_finished")
+
+    async def async_step_history_finished(self, user_input=None):
+        return self.async_abort(
+            reason="history_finished",
+            description_placeholders={
+                "message": self._operation_manager.last_message[:1200],
+            },
+        )
+
+    async def async_step_history_failed(self, user_input=None):
+        return self.async_abort(
+            reason="history_failed",
+            description_placeholders={
+                "message": getattr(self, "_operation_error", "Unknown error")[:1200],
+            },
         )
 
     async def async_step_flat(self, user_input=None):

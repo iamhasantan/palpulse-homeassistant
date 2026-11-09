@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.1.0b12
+
+### What's Changed
+
+- Add a guided, native Home Assistant **Configure** menu with Overview,
+  Electricity pricing, Free electricity hours, Previous cost history,
+  Electricity usage history and Historical electricity costs.
+- Use HA's time pickers and numeric controls for a simple shared daily free
+  electricity window and allowance, preserving advanced weekday/weekend tariffs.
+- Replace typed historical cost source IDs with separate pickers for existing
+  cumulative statistics or daily-reset sensor entities.
+- Provide read-only Preview, a second explicit confirmation for Import and
+  Undo, native HA progress UI, and visible completion/error results.
+- Keep the original migration coordinator, backup-first safety checks and
+  existing buttons unchanged for compatibility.
+- Group existing buttons, pricing entities and status sensors under one
+  dedicated PalPulse Powerpal device without changing their unique IDs.
+- Preserve beta 11 usage and cost statistics, tariff rates and import journals.
+
+### Important
+
+- This is an experimental GUI improvement. It does not start historical imports
+  automatically, alter any Recorder statistics or bypass verified backups.
+- A migration launched through the GUI may continue or be interrupted if its
+  progress view is closed; consult the status sensors and use the guarded
+  Resume tool rather than repeating an unchecked import.
+- Real Home Assistant 2026.11 frontend testing, migration progress checks and
+  a full import/Undo rehearsal on a restored test instance remain outstanding.
+  Do not run a live historical import without reviewing Preview and verifying
+  a complete Recorder-inclusive backup.
+
+
 ## 0.1.0b11
 
 ### What's Changed

@@ -10,6 +10,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
+from .device import meter_device_info
 from .pricing import (
     CONF_PRICING_MODE, CONF_FREE_CAP_KWH, MODE_HOME_ASSISTANT, daily_supply_dollars,
     price_for_datetime,
@@ -59,6 +60,7 @@ class MigrationSensor(SensorEntity):
     def __init__(self, meter: str, manager, suffix: str, name: str) -> None:
         self._manager = manager
         self._attr_unique_id = f"palpulse_{meter}_migration_{suffix}"
+        self._attr_device_info = meter_device_info(meter)
         self._attr_name = name
         self._unsubscribe = None
 
@@ -127,6 +129,7 @@ class LiveHistoryStatusSensor(SensorEntity):
     def __init__(self, meter: str, importer) -> None:
         self._importer = importer
         self._attr_unique_id = f"palpulse_{meter}_live_history_status"
+        self._attr_device_info = meter_device_info(meter)
         self._attr_name = "PalPulse live history status"
         self._unsubscribe = None
 
@@ -175,6 +178,7 @@ class ElectricityPriceSensor(SensorEntity):
     def __init__(self, meter, entry, currency) -> None:
         self._entry = entry
         self._attr_unique_id = f"palpulse_{meter}_electricity_unit_price"
+        self._attr_device_info = meter_device_info(meter)
         self._attr_name = "PalPulse electricity unit price"
         self._attr_native_unit_of_measurement = f"{currency}/kWh"
         self._unsubscribe_price = None
@@ -219,6 +223,7 @@ class DailySupplyChargeSensor(SensorEntity):
     def __init__(self, meter, entry, currency) -> None:
         self._entry = entry
         self._attr_unique_id = f"palpulse_{meter}_daily_supply_charge"
+        self._attr_device_info = meter_device_info(meter)
         self._attr_name = "PalPulse daily supply charge"
         self._attr_native_unit_of_measurement = f"{currency}/day"
 
@@ -238,6 +243,7 @@ class CostImportStatusSensor(SensorEntity):
     def __init__(self, mac, recorder):
         self._recorder = recorder
         self._attr_unique_id = f"palpulse_{mac}_cost_import_status"
+        self._attr_device_info = meter_device_info(mac)
         self._attr_name = "PalPulse cost import status"
 
     @property

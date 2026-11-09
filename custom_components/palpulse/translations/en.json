@@ -22,7 +22,11 @@
         "title": "PalPulse settings",
         "menu_options": {
           "pricing": "Electricity pricing",
-          "historical_costs": "Historical daily cost import"
+          "historical_costs": "Historical daily cost import",
+          "energy_history": "Electricity usage history",
+          "cost_history": "Historical electricity costs",
+          "overview": "Overview and health",
+          "free_hours": "Free electricity hours"
         }
       },
       "flat": {
@@ -59,28 +63,154 @@
       },
       "pricing": {
         "title": "Electricity pricing",
-        "description": "Use Home Assistant's own pricing (default), or configure Australian flat and time-of-use tariffs in PalPulse.",
+        "description": "Choose Home Assistant's pricing (default), an Australian flat rate, or a custom time-of-use tariff. PalPulse external energy statistics require their own cost statistic for Energy dashboard cost tracking.",
         "data": {
           "pricing_mode": "Pricing mode"
         }
       },
       "historical_costs": {
-        "title": "Historical daily cost import",
-        "description": "Set up a separate, opt-in import of your previous electricity costs. Choose a cumulative cost statistic or a daily-reset cost sensor with genuine hourly closing states. Preview first. Import requires a verified Home Assistant backup and an existing PalPulse live cost baseline.",
+        "title": "Previous cost history",
+        "description": "First select how your previous electricity cost was recorded. You will choose the actual sensor or cumulative statistic on the next screen. This does not change your electricity tariff.",
         "data": {
-          "legacy_cost_statistic_id": "Previous cost statistic ID (optional)",
           "legacy_cost_source_mode": "Previous cost source type"
         },
         "data_description": {
-          "legacy_cost_statistic_id": "For example, sensor.electricity_cost_today. Check that this source has recorded hourly cost states or cumulative sums. A $/kWh price sensor cannot be imported.",
-          "legacy_cost_source_mode": "Choose daily-reset only if the recorded cost resets to zero each local day. Incomplete or ambiguous days are skipped."
+          "legacy_cost_source_mode": "Select your prior data format. The next screen offers a visual picker."
+        }
+      },
+      "cost_source_statistic": {
+        "title": "Select an existing cumulative cost statistic",
+        "description": "Choose a recorded lifetime monetary total with cumulative hourly sums. A price-per-kWh sensor is not a historical cost. Leave empty to clear the previous source.",
+        "data": {
+          "legacy_cost_statistic_id": "Recorded electricity cost statistic"
+        }
+      },
+      "cost_source_daily": {
+        "title": "Select your previous daily electricity cost sensor",
+        "description": "Choose a sensor whose **recorded hourly closing states** hold the running total cost since local midnight. For example, a verified daily-reset electricity cost entity. Missing or ambiguous days are skipped. Leave empty to clear the source.",
+        "data": {
+          "legacy_cost_statistic_id": "Daily cost sensor"
+        }
+      },
+      "energy_history": {
+        "title": "Electricity usage history",
+        "description": "Review and manage the earlier Powerpal kWh import. You cannot import without a successful Preview and a fresh verified backup.",
+        "menu_options": {
+          "energy_preview": "Preview usage history",
+          "energy_import": "Import reviewed usage history",
+          "energy_resume": "Resume interrupted usage import",
+          "energy_undo": "Undo previously imported usage"
+        }
+      },
+      "cost_history": {
+        "title": "Historical electricity costs",
+        "description": "Review and manage historical costs separately from energy history and tariff configuration. Import and Undo require verified backups.",
+        "menu_options": {
+          "cost_preview": "Preview cost history",
+          "cost_import": "Import reviewed costs",
+          "cost_resume": "Resume interrupted cost import",
+          "cost_undo": "Undo imported historical costs"
+        }
+      },
+      "energy_preview": {
+        "title": "Preview Powerpal usage history",
+        "description": "**Read-only preview.** {rows} hourly rows from `{source}` would be imported into `{target}`. Found {gaps} gaps. No data has changed.\n\n{message}\n\nTick below to continue to a separate import confirmation screen.",
+        "data": {
+          "continue_to_import": "Continue to import confirmation"
+        }
+      },
+      "cost_preview": {
+        "title": "Preview historical electricity costs",
+        "description": "**Read-only preview.** {rows} hourly cost rows from `{source}` would be imported into `{target}`. Found {gaps} gaps. No data has changed.\n\n{message}\n\nTick below to continue to a separate import confirmation screen.",
+        "data": {
+          "continue_to_import": "Continue to import confirmation"
+        }
+      },
+      "energy_import": {
+        "title": "Confirm Powerpal history import",
+        "description": "**This changes PalPulse's historical energy statistic.** The original source `{source}` and existing readings at and after cutover remain untouched. Home Assistant must create and verify a Recorder-inclusive backup before any write. The preview covers {rows} rows. **Only continue if you reviewed it.**",
+        "data": {
+          "confirm_action": "I reviewed the preview and authorise a backed-up import"
+        }
+      },
+      "cost_import": {
+        "title": "Confirm historical cost import",
+        "description": "**This changes PalPulse's historical cost statistic only.** The original cost source `{source}` is never changed. A fresh Recorder-inclusive backup is required, and existing live cost rows are preserved. The preview covers {rows} rows.",
+        "data": {
+          "confirm_action": "I reviewed the cost preview and authorise a backed-up import"
+        }
+      },
+      "energy_resume": {
+        "title": "Resume the interrupted usage import",
+        "description": "PalPulse will verify the original backup and every already-written historical row before continuing. Conflicting data stops the operation. The old source is unchanged.",
+        "data": {
+          "confirm_action": "Resume and reconcile the interrupted usage import"
+        }
+      },
+      "cost_resume": {
+        "title": "Resume the interrupted cost import",
+        "description": "PalPulse will verify the original backup and existing historical cost rows before continuing. It will not overwrite unmatched data.",
+        "data": {
+          "confirm_action": "Resume and reconcile the interrupted cost import"
+        }
+      },
+      "energy_undo": {
+        "title": "Undo imported usage history",
+        "description": "**Destructive operation for imported PalPulse history only.** PalPulse creates and verifies a fresh Recorder-inclusive backup and removes only journalled historical rows before the original cutover. Original Powerpal usage and live PalPulse hours are preserved.",
+        "data": {
+          "confirm_action": "I understand and authorise removing the imported usage history"
+        }
+      },
+      "cost_undo": {
+        "title": "Undo imported historical costs",
+        "description": "**Destructive operation for imported cost history only.** A fresh Recorder-inclusive backup is created first. Only journalled, verified imported cost rows are removed. Original costs and energy history are preserved.",
+        "data": {
+          "confirm_action": "I understand and authorise removing the imported costs"
+        }
+      },
+      "history_progress": {
+        "title": "Processing historical electricity data"
+      },
+      "overview": {
+        "title": "PalPulse status overview",
+        "description": "**Live Powerpal importer:** {energy_status}\n\n**Last verified energy hour:** {last_energy_hour}\n\n**Skipped or incomplete hours:** {energy_gaps}\n\n**Electricity pricing:** {pricing}\n\n**Live cost writer:** {cost_status}\n\n**Historical cost source:** {cost_source}\n\n**Historical usage import:** {usage_history}\n\n**Historical cost import:** {cost_history}\n\nFor details, open the PalPulse Powerpal device page under Devices & services. This page is read-only."
+      },
+      "free_hours": {
+        "title": "Free electricity hours",
+        "description": "Use these time pickers when the **same free-power window applies every day**. For the older Red Energy Red Power5 offer, the commonly configured window is 11:00 am to 4:00 pm with up to 15 kWh free daily. Confirm your actual plan and rate on your bill. This screen preserves your existing peak and shoulder schedules. To configure different weekday/weekend free windows, use the advanced Time of Use pricing screen.",
+        "data": {
+          "free_start": "Free electricity begins",
+          "free_end": "Free electricity ends",
+          "daily_free_cap_kwh": "Free electricity allowance per day",
+          "free_excess_cents_per_kwh": "Rate after the free allowance"
+        },
+        "data_description": {
+          "daily_free_cap_kwh": "Enter 0 only if your offer provides unlimited free usage in this window.",
+          "free_excess_cents_per_kwh": "Enter the rate in cents per kWh specified by your retailer for usage after the free allowance. Verify the bill; no rate is assumed."
         }
       }
     },
     "error": {
       "invalid_pricing": "Invalid rate, free allowance or tariff window. Check for overlapping peak/shoulder periods.",
-      "invalid_source": "Choose a valid sensor.* or external statistic ID different from the PalPulse cost statistic, or leave it blank.",
-      "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched."
+      "invalid_source": "Choose a valid historical cost sensor or statistic other than PalPulse's target cost statistic.",
+      "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched.",
+      "confirmation_required": "Tick the confirmation checkbox before any data is changed."
+    },
+    "abort": {
+      "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",
+      "history_busy": "A migration is already running. Review the migration status before starting another.",
+      "history_already_started": "A previous import already exists. Use Resume for interrupted work or Undo for a completed import.",
+      "nothing_to_resume": "There is no interrupted import that can be resumed.",
+      "nothing_to_undo": "There is no recorded historical import to undo.",
+      "preview_unavailable": "Preview is unavailable: {message}",
+      "preview_complete": "The read-only preview has finished. No data was imported.",
+      "history_finished": "Historical operation completed. {message}",
+      "history_failed": "Historical operation stopped: {message}",
+      "enable_tou_first": "Choose a custom time-of-use electricity tariff first. Then return to this screen to configure free electricity with time pickers.",
+      "overview_complete": "Status overview closed. No configuration was changed."
+    },
+    "progress": {
+      "processing_history": "Backing up, processing and verifying {operation}. You can also monitor the PalPulse migration status and progress sensors."
     }
   }
 }
