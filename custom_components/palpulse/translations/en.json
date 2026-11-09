@@ -19,19 +19,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "Electricity pricing and legacy costs",
-        "description": "Home Assistant manages prices by default, with no PalPulse-generated cost statistic. To use custom tariffs with external PalPulse energy statistics, choose Flat or Time of Use. Only select a historical cost source if it has cumulative Recorder sums; current $/kWh sensors are not historical costs.",
-        "data": {
-          "pricing_mode": "Pricing mode",
-          "legacy_cost_statistic_id": "Previous cumulative electricity cost statistic (optional)"
-        },
-        "data_description": {
-          "legacy_cost_statistic_id": "For a separate, backup-first import of previously recorded costs. Example: sensor.electricity_cost_today, only if it has valid long-term cumulative cost sums."
+        "title": "PalPulse settings",
+        "menu_options": {
+          "pricing": "Electricity pricing",
+          "historical_costs": "Historical daily cost import"
         }
       },
       "flat": {
         "title": "Flat electricity tariff",
-        "description": "Enter actual GST-inclusive rates from your bill in cents. Daily supply is charged once per local calendar day and may be set to 0 when cost tracking is usage-only.",
+        "description": "Enter your actual electricity rate and optional daily supply fee in cents. Confirm rates against your bill.",
         "data": {
           "flat_cents_per_kwh": "Electricity price (c/kWh)",
           "daily_supply_cents": "Daily supply charge (c/day)"
@@ -39,7 +35,7 @@
       },
       "time_of_use": {
         "title": "Time of use / free power",
-        "description": "Use actual plan rates. For Red Power5: free 11:00-16:00 on both weekdays and weekends, cap 15 kWh/day, and paid-excess rate from your bill. Other Red Energy offers may use different hours or caps. Clock windows use local time, comma-separated HH:MM-HH:MM, and may not cross midnight. Empty free/peak/shoulder windows are allowed. Supply defaults to zero; check your bill.",
+        "description": "Enter your actual peak, shoulder, off-peak and optional free electricity windows. Times follow Home Assistant's local timezone. For Red Power5, verify your free hours and daily allowance against your bill.",
         "data": {
           "peak_cents_per_kwh": "Peak (c/kWh)",
           "shoulder_cents_per_kwh": "Shoulder (c/kWh)",
@@ -60,11 +56,30 @@
           "daily_free_cap_kwh": "For Red Power5, enter 15; for Red Midday Power Saver, 24",
           "free_excess_cents_per_kwh": "Red Power5 previously used 16.412 c/kWh in your local configuration. Verify current bill before use."
         }
+      },
+      "pricing": {
+        "title": "Electricity pricing",
+        "description": "Use Home Assistant's own pricing (default), or configure Australian flat and time-of-use tariffs in PalPulse.",
+        "data": {
+          "pricing_mode": "Pricing mode"
+        }
+      },
+      "historical_costs": {
+        "title": "Historical daily cost import",
+        "description": "Set up a separate, opt-in import of your previous electricity costs. Choose a cumulative cost statistic or a daily-reset cost sensor with genuine hourly closing states. Preview first. Import requires a verified Home Assistant backup and an existing PalPulse live cost baseline.",
+        "data": {
+          "legacy_cost_statistic_id": "Previous cost statistic ID (optional)",
+          "legacy_cost_source_mode": "Previous cost source type"
+        },
+        "data_description": {
+          "legacy_cost_statistic_id": "For example, sensor.electricity_cost_today. Check that this source has recorded hourly cost states or cumulative sums. A $/kWh price sensor cannot be imported.",
+          "legacy_cost_source_mode": "Choose daily-reset only if the recorded cost resets to zero each local day. Incomplete or ambiguous days are skipped."
+        }
       }
     },
     "error": {
       "invalid_pricing": "Invalid rate, free allowance or tariff window. Check for overlapping peak/shoulder periods.",
-      "invalid_source": "Specify a sensor.* or external statistic ID, or leave blank."
+      "invalid_source": "Choose a valid sensor.* or external statistic ID different from the PalPulse cost statistic, or leave it blank."
     }
   }
 }
