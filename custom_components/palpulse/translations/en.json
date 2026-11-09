@@ -236,7 +236,7 @@
       },
       "wizard_review": {
         "title": "Review your PalPulse configuration",
-        "description": "**Pricing:** {pricing}\n\n**Free hours:** {free_hours}\n\n**Daily free cap:** {free_cap} kWh\n\n**Previous cost source:** {cost_source}\n\nSaving only changes PalPulse's configuration and may reload the integration. **It does not run Preview, Import, Resume or Undo**. Historical import remains a separate opt-in, backup-first process.",
+        "description": "**Pricing:** {pricing}\n\n**Free hours:** {free_hours}\n\n**Daily free allowance:** {free_cap} kWh\n\n**Peak / shoulder / off-peak rates:** {peak} / {shoulder} / {offpeak} c/kWh\n\n**Flat rate (if selected):** {flat} c/kWh\n\n**Paid free-window excess:** {excess} c/kWh\n\n**Supply charge:** {supply} c/day\n\n**Previous cost source:** {cost_source}\n\nReview all amounts against your retailer's actual bill. Saving changes PalPulse configuration and may reload the integration, but **never runs historical Import, Resume or Undo**.",
         "data": {
           "confirm_save": "Save these settings after reviewing"
         }
