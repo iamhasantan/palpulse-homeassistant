@@ -37,7 +37,8 @@ from .migration_plan import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-LEGACY_STATISTIC_ID = "sensor.powerpal_proxy_powerpal_total_energy"
+LEGACY_STATISTIC_ID = "sensor.powerpal_proxy_powerpal_total_energy"  # Prior installations only
+CONF_LEGACY_ENERGY_SOURCE = "legacy_energy_statistic_id"
 EARLIEST = datetime(2010, 1, 1, tzinfo=timezone.utc)
 PREVIEW_SECONDS = 600
 CHUNK_SIZE = 240
@@ -54,7 +55,9 @@ class LegacyMigration:
         self.hass = hass
         self.entry = entry
         self.target_id = target_id
-        self.source_id = LEGACY_STATISTIC_ID
+        # Retain the original default for existing installations while allowing
+        # new users to select another compatible Powerpal source.
+        self.source_id = str(entry.options.get(CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID))
         self._store = Store(hass, 1, f"{DOMAIN}_migration_{entry.entry_id}")
         self._lock = asyncio.Lock()
         self._preview: MigrationPlan | None = None
