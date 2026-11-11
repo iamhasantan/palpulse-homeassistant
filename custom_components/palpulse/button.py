@@ -37,6 +37,7 @@ class MigrationButton(ButtonEntity):
 
     _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_registry_enabled_default = False  # Explicit experimental opt-in
+    _attr_entity_registry_visible_default = False  # Configure wizard is the primary UI.
     _attr_has_entity_name = False
     _attr_icon = "mdi:history"
 
@@ -90,5 +91,5 @@ class CostMigrationButton(MigrationButton):
         self._attr_unique_id = f"palpulse_{mac}_{action}_historical_cost_migration"
         # Cost controls remain separately preview/backup gated; show them even
         # before a cost source has been configured, so users can find the feature.
-        self._attr_entity_registry_enabled_default = True
+        self._attr_entity_registry_enabled_default = False
         self._attr_icon = "mdi:cash-sync"
