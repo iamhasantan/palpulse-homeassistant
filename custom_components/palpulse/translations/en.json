@@ -32,7 +32,8 @@
           "energy_integrity": "Energy history continuity check",
           "energy_source": "Choose previous energy source",
           "history_transport": "History delivery and acknowledgments",
-          "replace_esp32": "Replace an ESP32"
+          "replace_esp32": "Replace an ESP32",
+          "connection_check": "Check meter connection"
         }
       },
       "flat": {
@@ -303,6 +304,10 @@
         "data": {
           "confirm_replacement": "I backed up Home Assistant and am replacing only the ESP32 for the same meter."
         }
+      },
+      "connection_check": {
+        "title": "PalPulse connection check",
+        "description": "**Meter events:** {status}\n\n**Last event (UTC):** {last_event}\n\n**Last complete hour (UTC):** {completed_hour}\n\n**Acknowledgment action:** {ack}\n\n**Action status:** {ack_ready}\n\n**Last error:** {error}\n\nIf there are no events, check ESPHome pairing, `history_events: true` and **Allow the device to perform Home Assistant actions**. This screen never modifies the meter or Recorder."
       }
     },
     "error": {
