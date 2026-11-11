@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+## 0.1.0b15
+
+### What's Changed
+
+- Recover **exact energy consumption** for a completed UTC hour when at most
+  four *interior* Powerpal native-minute records are missing, using verified
+  cumulative meter-counter readings at both hourly boundaries.
+- Require monotonic counter continuity, matching observed one-minute pulses,
+  a stable sample phase, and a full following hour plus the existing late-event
+  grace period before accepting a sparse hour. Missing endpoints, uncertain
+  meter data, whole missing hours and counter resets remain unfilled.
+- Retain beta 14 Recorder sum reconciliation, read-back verification and
+  no-overwrite rules. Existing energy migration journals, historical statistics
+  and original Powerpal entities are not altered.
+- Keep tariff costing strict: **no charge is inferred for missing individual
+  minutes**. Sparse energy-only hours contribute exact kWh, but do not create
+  invented monetary statistics for that hour.
+- Fix capped-free-tariff accounting so a missing *paid* interval does not
+  suppress subsequent paid electricity costs for the rest of the day. Only
+  overlapping missing free-window minutes make that day's capped-free
+  allowance uncertain. Paid hours outside the uncertain free window continue
+  to be priced from verified minute readings.
+- Persist uncertain capped-free dates across restarts and handle local date
+  boundaries and daylight-saving transitions using UTC-minute timestamps.
+- Add the `sparse_recovered_hours` and `last_sparse_utc_hour` diagnostic
+  attributes, plus `free_cap_uncertain_dates` on cost recorder status.
+- Extend counter continuity, missing-boundary, sparse recovery and
+  capped-free-window accounting regression tests.
+
+### Important
+
+- This release **prevents avoidable future gaps**. It does **not** fill existing
+  missing Home Assistant Recorder hours or reprice earlier billing periods.
+  Older 9-11 November 2026 energy and cost gaps still need separate verification
+  against source readings and a Recorder-inclusive backup before any repair.
+- An exact sparse-hour kWh amount does not imply exact minute-by-minute tariff
+  cost. This beta deliberately favours incomplete cost history over an
+  unverified monetary estimate.
+- Home Assistant/Recorder, ESPHome transport and source event health must
+  still be checked if complete hours remain absent. Existing counter errors
+  continue to halt unsafe imports.
+- Features remain experimental. Validate a real HA 2026.11 instance and
+  compare charges against actual retailer bills before treating the cost
+  statistics as billing-grade.
+
 ## 0.1.0b14
 
 ### What's Changed
