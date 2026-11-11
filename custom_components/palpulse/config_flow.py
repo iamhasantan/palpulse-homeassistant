@@ -79,7 +79,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "replace_esp32", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "connection_check", "replace_esp32", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -609,6 +609,47 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     def _history_manager(self, kind: str):
         key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
         return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
+
+    async def async_step_connection_check(self, user_input=None):
+        """Read-only onboarding health without creating Recorder rows."""
+        if user_input is not None:
+            return self.async_abort(reason="overview_complete")
+        importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        state = importer.health if importer else {}
+        ack = str(state.get("ack_service") or "")
+        available = (
+            self.hass.services.has_service(*ack.split(".", 1))
+            if ack and "." in ack else False
+        )
+        return self.async_show_form(
+            step_id="connection_check",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "status": str(state.get("status", "Not started")),
+                "last_event": (
+                    datetime.fromtimestamp(
+                        state["last_event_received"], timezone.utc
+                    ).isoformat()
+                    if state.get("last_event_received") is not None
+                    else "No meter events received"
+                ),
+                "completed_hour": (
+                    datetime.fromtimestamp(
+                        state["last_completed_utc_hour"], timezone.utc
+                    ).isoformat()
+                    if state.get("last_completed_utc_hour") is not None
+                    else "No completed hour"
+                ),
+                "ack": ack or "Disabled (best-effort events)",
+                "ack_ready": "Available" if available else (
+                    "Not found; check ESPHome action and firmware" if ack
+                    else "Not configured"
+                ),
+                "error": str(state.get("last_import_error") or
+                             state.get("ack_error") or "None"),
+            },
+            last_step=True,
+        )
 
     async def async_step_replace_esp32(self, user_input=None):
         """Explicit, time-limited rebase for a replacement ESP32 checkpoint."""
