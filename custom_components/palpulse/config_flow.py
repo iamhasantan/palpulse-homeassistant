@@ -13,9 +13,8 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_METER_MAC, CONF_ACK_SERVICE, DOMAIN
+from .const import (CONF_METER_MAC, CONF_ACK_SERVICE, CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID, DOMAIN)
 from .history import normalize_mac
-from .migration import CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
