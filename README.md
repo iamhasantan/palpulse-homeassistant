@@ -45,6 +45,26 @@ leaves it alone. You can show hidden entities again from Home Assistant's entity
 settings. Historical statistics, migration journals and tariff settings are
 unchanged.
 
+## If usage shows but costs are A$0.00
+
+First check **PalPulse cost import status** under the device's diagnostic entities.
+It now distinguishes a cost recording delay, queued retry, missing cost hours
+and an Energy dashboard that has no PalPulse cost source selected.
+
+If the cost writer has committed hourly costs but the Energy dashboard
+doesn't display them, open **PalPulse → Configure → Electricity prices →
+Fix Energy dashboard costs**. Review the current source and confirm the link.
+You can optionally let PalPulse restore that exact link automatically if it
+later disappears. It will **never** replace a different price or cost source.
+
+PalPulse retries pending cost writes every five minutes and after a Home
+Assistant restart. A missing minute or an unknown capped-free allocation
+still cannot be priced accurately. Older hours with no preserved native
+minute data remain unpriced, not guessed or silently changed.
+
+The cost link controls the dashboard display. It does not change tariffs,
+create retroactive charges or modify existing energy history.
+
 ## Moving from another integration
 
 You can select an existing energy statistic under **PalPulse → Configure → History and migration → Energy history → Choose previous energy source**, then use the read-only Preview. The source must belong to the **same physical Powerpal meter** and have compatible cumulative readings. PalPulse will reject mismatched history rather than change your existing data.
