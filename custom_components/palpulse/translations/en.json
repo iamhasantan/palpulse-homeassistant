@@ -30,7 +30,8 @@
           "energy_history": "Electricity usage history",
           "dashboard": "PalPulse dashboard setup",
           "energy_integrity": "Energy history continuity check",
-          "energy_source": "Choose previous energy source"
+          "energy_source": "Choose previous energy source",
+          "history_transport": "History delivery and acknowledgments"
         }
       },
       "flat": {
@@ -284,6 +285,16 @@
         "data_description": {
           "legacy_energy_statistic_id": "Select the previously recorded cumulative energy source for this Powerpal meter."
         }
+      },
+      "history_transport": {
+        "title": "Reliable history delivery (preview)",
+        "description": "Optional. If your ESPHome firmware has **reliable_history: true**, and `api.custom_services: true`, enter its Home Assistant action name, such as `esphome.powerpal_proxy_palpulse_ack`. PalPulse will acknowledge each durable minute so the ESP32 can replay unconfirmed measurements. Leave blank for the older best-effort event path. Back up your device before flashing new firmware.",
+        "data": {
+          "history_ack_service": "ESPHome acknowledgment action"
+        },
+        "data_description": {
+          "history_ack_service": "Must start with `esphome.` and end with the service name registered by the device."
+        }
       }
     },
     "error": {
@@ -293,7 +304,8 @@
       "confirmation_required": "Tick the confirmation checkbox before any data is changed.",
       "source_required": "Select a recorded historical electricity cost source, or return to the previous step and skip this part.",
       "invalid_energy_source": "Choose a valid existing energy statistic, not the destination PalPulse statistic.",
-      "energy_migration_locked": "This energy source is locked to an existing migration journal. Undo that import before changing sources."
+      "energy_migration_locked": "This energy source is locked to an existing migration journal. Undo that import before changing sources.",
+      "invalid_ack_service": "Use the ESPHome action name, for example esphome.powerpal_proxy_palpulse_ack."
     },
     "abort": {
       "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",
