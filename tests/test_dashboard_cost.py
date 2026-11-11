@@ -152,6 +152,44 @@ class DashboardCostTests(unittest.IsolatedAsyncioTestCase):
             COST,
         )
 
+    async def test_confirmed_auto_relink_recovers_without_overwriting_user_choice(self):
+        cost_recorder = importlib.import_module(
+            "custom_components.palpulse.cost_recorder"
+        )
+        entry = types.SimpleNamespace(options={
+            "pricing_mode": "custom_flat",
+            "flat_cents_per_kwh": 25,
+            "daily_supply_cents": 0,
+            "auto_link_energy_cost": True,
+        })
+        # Same physical meter/statistic; no fake configuration of another source.
+        mac = "aabbccddeeff"
+        writer = cost_recorder.PalPulseCostRecorder(self.hass, entry, mac)
+        writer._last_hour = 1800000000
+
+        async def read_verified_hour(start, end):
+            return [{"start": start, "state": 10.0, "sum": 10.0}]
+
+        writer._read = read_verified_hour
+        await writer.async_refresh_cost_link()
+        self.assertEqual(writer.status["energy_dashboard_cost_link"], "linked")
+        self.assertEqual(self.hass.energy_manager.calls, 1)
+
+        # Removing a previously opted-in mapping should only recover if it
+        # is still empty and the opt-in remains enabled.
+        self.hass.energy_manager.data["energy_sources"][0]["stat_cost"] = None
+        writer.entry.options["auto_link_energy_cost"] = False
+        await writer.async_refresh_cost_link()
+        self.assertEqual(writer.status["energy_dashboard_cost_link"], "unlinked")
+        self.assertEqual(self.hass.energy_manager.calls, 1)
+
+        # An alternate user-selected tariff must never be overwritten.
+        writer.entry.options["auto_link_energy_cost"] = True
+        self.hass.energy_manager.data["energy_sources"][0]["entity_energy_price"] = "sensor.my_price"
+        await writer.async_refresh_cost_link()
+        self.assertEqual(writer.status["energy_dashboard_cost_link"], "other_price")
+        self.assertEqual(self.hass.energy_manager.calls, 1)
+
     def test_other_user_sources_and_empty_configuration_untouched(self):
         unknown = cost_link.assess_cost_link(
             {"energy_sources": [{"type": "grid", "stat_energy_from": "sensor.other"}]},
