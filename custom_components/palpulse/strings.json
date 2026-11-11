@@ -330,9 +330,10 @@
       },
       "energy_dashboard_cost": {
         "title": "Energy dashboard cost tracking",
-        "description": "**Status:** {status}\\n\\n{guidance}\\n\\nYour energy source is `{energy_statistic}`. PalPulse calculates costs separately as `{cost_statistic}`.\\n\\nIf you confirm, PalPulse links its **already recorded, verified cost statistic** to the matching grid source. It will not replace a price or cost source you already chose, change any meter reading or rewrite your history. If cost hours are missing, check **PalPulse cost import status** first.",
+        "description": "**Status:** {status}\\n\\n{guidance}\\n\\nYour energy source is `{energy_statistic}`. PalPulse records costs separately as `{cost_statistic}`.\\n\\nChoose **Link costs** to use a verified cost statistic. Optionally allow PalPulse to restore that link if it goes missing after an update. It will never overwrite a different price or cost source, alter consumption statistics, or guess missing bills. A Recorder-inclusive backup is recommended before changes.",
         "data": {
-          "confirm_link": "Link verified PalPulse costs to my Energy dashboard"
+          "confirm_link": "Link verified PalPulse costs",
+          "keep_link_active": "Keep this link working automatically"
         }
       }
     },
