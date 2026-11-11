@@ -210,6 +210,13 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.importer.health["last_gap_utc_hour"], BASE + 3600)
 
     async def test_sparse_interior_minute_recovers_exact_energy(self):
+        costed_hours = []
+
+        class FakeCostWriter:
+            async def async_import_verified_hour(self, hour, records, calibration):
+                costed_hours.append(hour.hour_start)
+
+        self.importer.cost_recorder = FakeCostWriter()
         await self.feed_hour(BASE, 40000)
         await self.feed_hour(BASE + 3600, 40600, skip=13)
         await self.feed_hour(BASE + 7200, 41200)
@@ -220,6 +227,8 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(RECORDER_IMPORTS[2][1][0]["sum"], 1800 / CAL)
         self.assertEqual(self.importer.health["skipped_hours"], 0)
         self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
+        # Missing minute pricing is not reconstructed from hourly totals.
+        self.assertEqual(costed_hours, [BASE, BASE + 7200])
 
     async def test_second_hour_and_restart(self):
         await self.feed_hour(BASE, 40000)
