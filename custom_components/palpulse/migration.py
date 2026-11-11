@@ -57,7 +57,7 @@ class LegacyMigration:
         self.target_id = target_id
         # Retain the original default for existing installations while allowing
         # new users to select another compatible Powerpal source.
-        self.source_id = str(entry.options.get(CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID))
+        self.source_id = str(getattr(entry, "options", {}).get(CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID))
         self._store = Store(hass, 1, f"{DOMAIN}_migration_{entry.entry_id}")
         self._lock = asyncio.Lock()
         self._preview: MigrationPlan | None = None
