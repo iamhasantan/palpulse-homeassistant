@@ -52,7 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # Keep user-customized titles, meter identity and all statistics untouched.
     if is_legacy_default_entry_title(getattr(entry, "title", None), meter):
         hass.config_entries.async_update_entry(entry, title=INTEGRATION_NAME)
-    importer = PalPulseImporter(hass, meter, entry.options.get(CONF_ACK_SERVICE))
+    importer = PalPulseImporter(hass, meter, getattr(entry, "options", {}).get(CONF_ACK_SERVICE))
     await importer.async_load()
     # Cost tracking is opt-in. It cannot rewrite or interrupt energy history.
     from .cost import is_cost_enabled
