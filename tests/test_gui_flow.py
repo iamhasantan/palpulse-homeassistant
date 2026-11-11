@@ -176,7 +176,7 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         ])
 
         tariffs = await self.flow.async_step_electricity_settings()
-        self.assertEqual(tariffs["menu_options"], ["pricing", "free_hours"])
+        self.assertEqual(tariffs["menu_options"], ["pricing", "free_hours", "energy_dashboard_cost"])
         self.flow.config_entry.options = {"pricing_mode": "home_assistant"}
         tariffs = await self.flow.async_step_electricity_settings()
         self.assertEqual(tariffs["menu_options"], ["pricing"])
