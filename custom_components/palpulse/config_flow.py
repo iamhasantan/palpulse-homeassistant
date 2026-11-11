@@ -13,7 +13,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_METER_MAC, DOMAIN
+from .const import (CONF_METER_MAC, CONF_ACK_SERVICE, CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID, DOMAIN)
 from .history import normalize_mac
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
@@ -79,7 +79,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "connection_check", "replace_esp32", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -438,7 +438,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             weekend = str(prior.get("weekend_free", "")).strip()
             if weekday and weekday == weekend and weekday.count("-") == 1 and "," not in weekday:
                 return tuple(weekday.split("-", 1))
-            return ("11:00", "16:00")
+            return (None, None)  # No retailer-specific default for a generic tariff
 
         start_default, end_default = window_defaults()
         errors = {}
@@ -462,11 +462,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_show_form(
             step_id="free_hours",
             data_schema=vol.Schema({
-                vol.Required("free_start", default=start_default): selector.TimeSelector(),
-                vol.Required("free_end", default=end_default): selector.TimeSelector(),
+                (vol.Required("free_start", default=start_default) if start_default else vol.Required("free_start")): selector.TimeSelector(),
+                (vol.Required("free_end", default=end_default) if end_default else vol.Required("free_end")): selector.TimeSelector(),
                 vol.Required(
                     CONF_FREE_CAP_KWH,
-                    default=prior.get(CONF_FREE_CAP_KWH, 15),
+                    default=prior.get(CONF_FREE_CAP_KWH, 0),
                 ): selector.NumberSelector(selector.NumberSelectorConfig(
                     min=0, max=10000, step="any",
                     mode=selector.NumberSelectorMode.BOX,
@@ -610,12 +610,119 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
         return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
 
+    async def async_step_connection_check(self, user_input=None):
+        """Read-only onboarding health without creating Recorder rows."""
+        if user_input is not None:
+            return self.async_abort(reason="overview_complete")
+        importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        state = importer.health if importer else {}
+        ack = str(state.get("ack_service") or "")
+        available = (
+            self.hass.services.has_service(*ack.split(".", 1))
+            if ack and "." in ack else False
+        )
+        return self.async_show_form(
+            step_id="connection_check",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "status": str(state.get("status", "Not started")),
+                "last_event": (
+                    datetime.fromtimestamp(
+                        state["last_event_received"], timezone.utc
+                    ).isoformat()
+                    if state.get("last_event_received") is not None
+                    else "No meter events received"
+                ),
+                "completed_hour": (
+                    datetime.fromtimestamp(
+                        state["last_completed_utc_hour"], timezone.utc
+                    ).isoformat()
+                    if state.get("last_completed_utc_hour") is not None
+                    else "No completed hour"
+                ),
+                "ack": ack or "Disabled (best-effort events)",
+                "ack_ready": "Available" if available else (
+                    "Not found; check ESPHome action and firmware" if ack
+                    else "Not configured"
+                ),
+                "error": str(state.get("last_import_error") or
+                             state.get("ack_error") or "None"),
+            },
+            last_step=True,
+        )
+
+    async def async_step_replace_esp32(self, user_input=None):
+        """Explicit, time-limited rebase for a replacement ESP32 checkpoint."""
+        if user_input is not None and user_input.get("confirm_replacement") is True:
+            importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+            if importer is None:
+                return self.async_abort(reason="importer_unavailable")
+            await importer.async_arm_device_replacement()
+            return self.async_abort(reason="replacement_armed")
+        return self.async_show_form(
+            step_id="replace_esp32",
+            data_schema=vol.Schema({
+                vol.Required("confirm_replacement", default=False): bool,
+            }),
+        )
+
+    async def async_step_history_transport(self, user_input=None):
+        """Opt in to the ESPHome acknowledged native-API history action."""
+        current = str(self.config_entry.options.get(CONF_ACK_SERVICE, ""))
+        errors = {}
+        if user_input is not None:
+            service = str(user_input.get(CONF_ACK_SERVICE) or "").strip()
+            if service and not re.fullmatch(r"esphome\.[a-z][a-z0-9_]+", service):
+                errors["base"] = "invalid_ack_service"
+            else:
+                options = {**self.config_entry.options}
+                if service:
+                    options[CONF_ACK_SERVICE] = service
+                else:
+                    options.pop(CONF_ACK_SERVICE, None)
+                return self.async_create_entry(data=options)
+        return self.async_show_form(
+            step_id="history_transport",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_ACK_SERVICE, default=current): str,
+            }),
+            errors=errors,
+        )
+
+    async def async_step_energy_source(self, user_input=None):
+        """Choose an energy migration source without touching old statistics."""
+        manager = self._history_manager("energy")
+        current = self.config_entry.options.get(CONF_LEGACY_ENERGY_SOURCE)
+        errors = {}
+        if user_input is not None:
+            source = str(user_input.get(CONF_LEGACY_ENERGY_SOURCE) or "").strip()
+            target = f"{DOMAIN}:powerpal_{self.config_entry.data[CONF_METER_MAC]}_energy"
+            if not source or not _SOURCE_ID_RE.fullmatch(source) or source == target:
+                errors["base"] = "invalid_energy_source"
+            elif (manager and manager.journal.get("status") not in
+                  {None, "undone"} and source != manager.source_id):
+                errors["base"] = "energy_migration_locked"
+            else:
+                return self.async_create_entry(
+                    data={**self.config_entry.options,
+                          CONF_LEGACY_ENERGY_SOURCE: source}
+                )
+        return self.async_show_form(
+            step_id="energy_source",
+            data_schema=vol.Schema({
+                (vol.Required(CONF_LEGACY_ENERGY_SOURCE, default=current)
+                 if current else vol.Required(CONF_LEGACY_ENERGY_SOURCE)):
+                    selector.StatisticSelector(),
+            }),
+            errors=errors,
+        )
+
     async def async_step_energy_history(self, user_input=None):
         """Guided workflow, separate from tariff configuration."""
         return self.async_show_menu(
             step_id="energy_history",
             menu_options=[
-                "energy_preview", "energy_import", "energy_resume", "energy_undo",
+                "energy_source", "energy_preview", "energy_import", "energy_resume", "energy_undo",
             ],
         )
 

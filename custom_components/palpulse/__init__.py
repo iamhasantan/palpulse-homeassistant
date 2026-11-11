@@ -25,7 +25,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.recorder import get_instance
 
 from .branding import INTEGRATION_NAME, is_legacy_default_entry_title
-from .const import CONF_METER_MAC, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
+from .const import CONF_METER_MAC, CONF_ACK_SERVICE, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
 from .history import (
     HOUR_SECONDS,
     MAX_BACKFILL_AGE,
@@ -52,7 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # Keep user-customized titles, meter identity and all statistics untouched.
     if is_legacy_default_entry_title(getattr(entry, "title", None), meter):
         hass.config_entries.async_update_entry(entry, title=INTEGRATION_NAME)
-    importer = PalPulseImporter(hass, meter)
+    importer = PalPulseImporter(hass, meter, getattr(entry, "options", {}).get(CONF_ACK_SERVICE))
     await importer.async_load()
     # Cost tracking is opt-in. It cannot rewrite or interrupt energy history.
     from .cost import is_cost_enabled
@@ -125,9 +125,15 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
 class PalPulseImporter:
     """Per-meter durable ledger and conservative hourly statistics importer."""
 
-    def __init__(self, hass: HomeAssistant, mac: str) -> None:
+    def __init__(self, hass: HomeAssistant, mac: str, ack_service: str | None = None) -> None:
         self.hass = hass
         self.mac = mac
+        self._ack_service = ack_service
+        self._ack_timestamp: int | None = None
+        self._ack_total: int | None = None
+        self._ack_error: str | None = None
+        self._device_rebase_deadline: int | None = None
+        self._device_rebase_count = 0
         self.statistic_id = f"{DOMAIN}:powerpal_{mac}_energy"
         self._store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{mac}")
         self._lock = asyncio.Lock()
@@ -170,6 +176,10 @@ class PalPulseImporter:
             "last_event_at": self._last_event_at,
             "status_message": self._status_message,
             "last_import_error": self._last_import_error,
+            "ack_timestamp": self._ack_timestamp,
+            "ack_total": self._ack_total,
+            "device_rebase_deadline": self._device_rebase_deadline,
+            "device_rebase_count": self._device_rebase_count,
             "records": {
                 str(t): [r.pulses, r.total_pulses]
                 for t, r in self._records.items()
@@ -204,6 +214,10 @@ class PalPulseImporter:
         self._last_event_at = state.get("last_event_at")
         self._status_message = state.get("status_message", self._status_message)
         self._last_import_error = state.get("last_import_error")
+        self._ack_timestamp = state.get("ack_timestamp")
+        self._ack_total = state.get("ack_total")
+        self._device_rebase_deadline = state.get("device_rebase_deadline")
+        self._device_rebase_count = int(state.get("device_rebase_count", 0))
         if self._last_hour is not None and (
             self._accounted_pulses is None or self._accounted_pulses < 0
         ):
@@ -255,6 +269,11 @@ class PalPulseImporter:
             "pending_minute_records": len(self._records),
             "message": self._status_message,
             "last_import_error": self._last_import_error,
+            "ack_service": self._ack_service,
+            "last_acknowledged_utc_minute": self._ack_timestamp,
+            "ack_error": self._ack_error,
+            "device_rebase_deadline": self._device_rebase_deadline,
+            "device_rebase_count": self._device_rebase_count,
             "statistic_id": self.statistic_id,
             "sum_offset_kwh": self._sum_offset,
             "last_sum_reconciliation_utc_hour": self._last_reconciled_at,
@@ -267,6 +286,54 @@ class PalPulseImporter:
     def _notify_health(self) -> None:
         for listener in tuple(self._listeners):
             listener()
+
+    async def async_arm_device_replacement(self) -> None:
+        """One-time, 24h approval for an ESP32 checkpoint-reset transition.
+
+        Only a later complete and counter-verified hour can establish the new
+        raw state. The previous Recorder sum stays the sole continuity anchor.
+        No data is written or deleted by arming.
+        """
+        async with self._lock:
+            self._device_rebase_deadline = int(time.time()) + 86400
+            self._halted = False
+            self._status_message = (
+                "ESP32 replacement armed for 24 hours. Awaiting a verified "
+                "complete hour; unknown consumption will not be estimated"
+            )
+            await self._store.async_save(self._snapshot())
+            self._notify_health()
+
+    async def _ack_received(self, record: Record) -> None:
+        """Confirm one durable minute, never an inferred or unverified event."""
+        if not self._ack_service or self._halted or self._last_import_error:
+            return
+        if self._ack_timestamp is None:
+            self._ack_timestamp = record.timestamp
+            self._ack_total = record.total_pulses
+        elif record.timestamp == self._ack_timestamp + RECORD_SECONDS and (
+            record.total_pulses == self._ack_total + record.pulses
+        ):
+            self._ack_timestamp = record.timestamp
+            self._ack_total = record.total_pulses
+        # The recorder/pending ledger must reach storage before an ESP32 ACK.
+        await self._store.async_save(self._snapshot())
+        if self._ack_timestamp is None or record.timestamp > self._ack_timestamp:
+            return
+        domain, service = self._ack_service.split(".", 1)
+        if not self.hass.services.has_service(domain, service):
+            self._ack_error = "ESPHome acknowledgment action not registered"
+            return
+        try:
+            # Only acknowledge the exact event being retried, not an arbitrary
+            # later cursor, because the firmware enforces strict queue order.
+            await self.hass.services.async_call(
+                domain, service, {"timestamp": record.timestamp}, blocking=True
+            )
+            self._ack_error = None
+        except Exception as err:
+            self._ack_error = f"{type(err).__name__}: {err}"
+            _LOGGER.warning("PalPulse ESPHome ACK failed: %s", self._ack_error)
 
     async def async_receive(self, data: dict) -> None:
         now = int(time.time())
@@ -299,9 +366,12 @@ class PalPulseImporter:
                         record.timestamp, self.mac,
                     )
                     await self._store.async_save(self._snapshot())
+                else:
+                    await self._ack_received(record)
                 return
             if (self._last_timestamp is not None and
                     record.timestamp <= self._last_timestamp):
+                await self._ack_received(record)
                 return  # Already imported, including duplicate replay after restart.
             self._records[record.timestamp] = record
             try:
@@ -322,7 +392,10 @@ class PalPulseImporter:
                 )
             finally:
                 self._prune(now)
-                self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
+                if self._ack_service and not self._halted and not self._last_import_error:
+                    await self._ack_received(record)
+                else:
+                    self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
                 self._notify_health()
 
     async def _recorder_hour(self, hour_start: int) -> list[dict]:
@@ -551,13 +624,21 @@ class PalPulseImporter:
                 return
 
             first_before = hour.first_total - hour.first_pulses
-            if (
+            discontinuity = (
                 first_before < self._last_total
                 or (skipped == 0 and (
                     hour.first_timestamp != self._last_timestamp + RECORD_SECONDS
                     or hour.first_total != self._last_total + hour.first_pulses
                 ))
-            ):
+            )
+            permitted_device_rebase = (
+                discontinuity
+                and first_before < self._last_total
+                and self._device_rebase_deadline is not None
+                and now <= self._device_rebase_deadline
+                and hour.missing_minutes == 0
+            )
+            if discontinuity and not permitted_device_rebase:
                 self._halted = True
                 self._status_message = (
                     f"Meter counter or timestamps discontinuous at UTC hour "
@@ -586,9 +667,22 @@ class PalPulseImporter:
                         hour, self._records, self._calibration
                     )
             self._accounted_pulses = next_accounted
+            if permitted_device_rebase:
+                self._device_rebase_deadline = None
+                self._device_rebase_count += 1
+                _LOGGER.warning(
+                    "PalPulse approved replacement ESP32 counter at UTC %s. "
+                    "Previous unknown interval omitted; verified Recorder sum preserved",
+                    hour.hour_start,
+                )
             self._last_hour = hour.hour_start
             self._last_timestamp = hour.last_timestamp
             self._last_total = hour.last_total
+            if permitted_device_rebase:
+                self._status_message = (
+                    f"ESP32 replacement accepted at UTC hour {hour.hour_start}; "
+                    "old cumulative sum preserved without estimating missing interval"
+                )
             if hour.missing_minutes:
                 self._sparse_recovered_count += 1
                 self._last_sparse_hour = hour.hour_start
@@ -614,7 +708,7 @@ class PalPulseImporter:
                     f"Counter-verified UTC hour {hour.hour_start}; "
                     f"{hour.missing_minutes} missing minute(s), cost withheld"
                 )
-            else:
+            elif not permitted_device_rebase:
                 self._status_message = (
                     f"Imported complete UTC hour {hour.hour_start}"
                 )

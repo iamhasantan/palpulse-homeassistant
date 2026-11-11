@@ -96,8 +96,8 @@ def validate_pricing(options: Mapping[str, object]) -> None:
         excess = float(options.get(CONF_FREE_EXCESS_CENTS, 0))
         if not all(math.isfinite(x) for x in (cap, excess)) or cap < 0 or excess < 0 or cap > 10000 or excess > 10000:
             raise ValueError("Invalid free electricity daily cap or excess rate")
-        if cap > 0 and CONF_FREE_EXCESS_CENTS not in options:
-            raise ValueError("An excess rate is required for a capped free window")
+        if cap > 0 and (CONF_FREE_EXCESS_CENTS not in options or excess <= 0):
+            raise ValueError("A positive excess rate is required for a capped free window")
         schedules = {key: parse_windows(options.get(key, "")) for key in WINDOW_FIELDS}
         for day in ("weekday", "weekend"):
             peak = schedules[f"{day}_peak"]

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.2b1
+
+### What's Changed
+
+- **New-user migration:** Select your previous energy statistic instead of relying on the original PalPulse author's sensor name. Preview still validates the meter's counter at cutover and requires a Recorder-inclusive backup before Import.
+- **ESP32 replacement:** A guided, one-time, 24-hour counter transition preserves existing recorded energy sums when replacing the ESP32 for the same Powerpal meter. It does not invent energy from missing time.
+- **Optional confirmed history delivery:** With the matching 0.2b1 ESPHome component and the configured native ACK action, incoming minutes are acknowledged only after Home Assistant has durably stored them. Missing data can be replayed only while it remains in the meter buffer.
+- **Cost resilience:** Complete cost hours are journalled for retry, tariff settings are saved with queued hours, and unknown capped-free periods no longer prevent unrelated paid hours from recording.
+- **Safer tariff setup:** The generic free-power form no longer assumes Red Energy's default hours or allowance. Capped offers require a positive excess rate.
+- **Better diagnostics and onboarding:** Added connection checks, delivery acknowledgments, ESP32 replacement guidance and a much shorter public README.
+
+### Preview precautions
+
+- **Back up Home Assistant including Recorder/history** before upgrading, importing history or accepting an ESP32 counter transition. Keep your current ESPHome firmware and NVS checkpoint before reflashing.
+- The acknowledged transport and ESP32 replacement features are **experimental** and need real-device testing. Existing installations continue using their previous event path until acknowledged transport is explicitly configured.
+- No existing historical energy or cost gaps are automatically repaired by this release. Never re-run old history imports just to fix a gap.
+- Cost estimates are not billing-grade. Changes in tariff within an hour are conservatively left unpriced rather than estimated; verify actual plans and charges with the retailer.
+
 ## 0.1.0b15
 
 ### What's Changed
