@@ -2,7 +2,7 @@
 
 Local electricity monitoring for **Powerpal** meters using an ESP32 and Home Assistant. PalPulse brings live readings, timestamped energy history and optional electricity-cost tracking into Home Assistant without a cloud account.
 
-> **Early preview: 0.2b1.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+> **Early preview: 0.2b2.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
 
 ## What it does
 
@@ -19,16 +19,35 @@ PalPulse keeps its historical energy statistic separate from your existing live 
 You'll need Home Assistant **2026.11 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
 
 1. Open **Settings → Marketplace → Add from link** and enter `https://github.com/iamhasantan/palpulse-homeassistant`.
-2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.2b1** under Updates, then restart Home Assistant.
+2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.2b2** under Updates, then restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → PalPulse for Home Assistant** and enter your Powerpal BLE MAC address.
 4. Enable history events in the companion ESPHome component. On the ESPHome device in Home Assistant, allow the device to perform Home Assistant actions.
 5. Check **PalPulse live history status** before switching your Energy dashboard to the new statistic.
 
 The optional **acknowledged history transport** is a preview feature. It requires matching ESPHome firmware and an additional native-API action setting. Use the [setup and recovery guide](docs/setup-and-recovery.md) before enabling it.
 
+## A simpler settings screen
+
+Open **Settings → Devices & services → PalPulse for Home Assistant → Configure**.
+The main screen has five sections:
+
+- **Status** shows live recording, pricing and import health.
+- **Set up PalPulse** walks through the initial tariff setup.
+- **Electricity prices** contains tariff and free-power settings.
+- **History and migration** has optional historical energy/cost imports and the read-only continuity check.
+- **Advanced** contains connection checks, acknowledged delivery, ESP32 replacement and dashboard setup.
+
+The device page now focuses on live health. Older duplicate import buttons,
+completed-migration progress indicators and the standalone daily supply charge
+are hidden by default, not deleted. They still work if you have automations or
+dashboards using them. If you customised an entity's name or visibility, PalPulse
+leaves it alone. You can show hidden entities again from Home Assistant's entity
+settings. Historical statistics, migration journals and tariff settings are
+unchanged.
+
 ## Moving from another integration
 
-You can select an existing energy statistic under **PalPulse → Configure → Choose previous energy source**, then use the read-only Preview. The source must belong to the **same physical Powerpal meter** and have compatible cumulative readings. PalPulse will reject mismatched history rather than change your existing data.
+You can select an existing energy statistic under **PalPulse → Configure → History and migration → Energy history → Choose previous energy source**, then use the read-only Preview. The source must belong to the **same physical Powerpal meter** and have compatible cumulative readings. PalPulse will reject mismatched history rather than change your existing data.
 
 If you're replacing the ESP32 but keeping the same Powerpal meter, follow the separate hardware-replacement procedure. **Do not factory-reset an existing ESP32 or erase NVS just to install PalPulse.**
 
