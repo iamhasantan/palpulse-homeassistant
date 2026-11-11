@@ -269,8 +269,13 @@ class CostImportStatusSensor(SensorEntity):
             return "Dashboard cost not linked"
         if state["last_costed_hour"] is None:
             return "Waiting"
-        # A single old cost hour must not make this entity appear healthy
-        # forever after subsequent Energy hours stop being priced.
+        # Use the current verified energy cursor to spot an actual cost lag,
+        # not just the age of a single older cost row.
+        lag = state.get("energy_to_cost_lag_hours")
+        if lag is not None and lag >= 2:
+            return "Cost history delayed"
+        if state.get("unpriced_hours"):
+            return "Active with missing costs"
         import time
         if int(time.time()) - int(state["last_costed_hour"]) > 4 * 3600:
             return "Cost history delayed"
