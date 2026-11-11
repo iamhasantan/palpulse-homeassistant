@@ -26,9 +26,25 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .cost import (free_dates_between, is_cost_enabled, price_verified_hour, supply_charge_for_dates)
-from .pricing import CONF_FREE_CAP_KWH
+from .pricing import (
+    CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
+    CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
+    CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS, WINDOW_FIELDS,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_TARIFF_FIELDS = frozenset({
+    CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
+    CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
+    CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS,
+    *WINDOW_FIELDS,
+})
+
+
+def _tariff_options(options) -> dict:
+    """A non-tariff setting must not falsely create a pricing transition."""
+    return {k: options[k] for k in _TARIFF_FIELDS if k in options}
 
 
 class UnpriceableHour(ValueError):
@@ -120,12 +136,12 @@ class PalPulseCostRecorder:
         self._unpriced_hours = set(int(ts) for ts in data.get("unpriced_hours", []))
         self._last_retry_utc = data.get("last_retry_utc")
         self._retry_count = int(data.get("recovery_attempts", 0))
-        current = dict(self.entry.options)
+        current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
             self._tariff_profiles = [{"from": 0, "options": current, "timezone": zone}]
         elif (
-            self._tariff_profiles[-1]["options"] != current
+            _tariff_options(self._tariff_profiles[-1]["options"]) != current
             or self._tariff_profiles[-1]["timezone"] != zone
         ):
             now = int(time.time())
