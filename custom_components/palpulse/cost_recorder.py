@@ -141,11 +141,20 @@ class PalPulseCostRecorder:
     async def async_refresh_cost_link(self) -> None:
         """Diagnose a missing Energy dashboard cost mapping, never change it."""
         try:
-            from .dashboard_cost import async_check_cost_link
+            from .dashboard_cost import async_check_cost_link, async_link_verified_cost
+            from .const import CONF_AUTO_LINK_ENERGY_COST
+
+            energy_id = f"{DOMAIN}:powerpal_{self.mac}_energy"
             result = await async_check_cost_link(
-                self.hass, f"{DOMAIN}:powerpal_{self.mac}_energy",
-                self.statistic_id,
+                self.hass, energy_id, self.statistic_id,
             )
+            if (
+                result.status == "unlinked"
+                and self.entry.options.get(CONF_AUTO_LINK_ENERGY_COST, False)
+            ):
+                result = await async_link_verified_cost(
+                    self.hass, energy_id, self.statistic_id, self,
+                )
             self._energy_cost_link = result.status
             self._energy_cost_guidance = result.guidance
         except Exception as err:
