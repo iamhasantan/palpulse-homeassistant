@@ -33,6 +33,7 @@ from .history import (
     Record,
     complete_hour,
     hourly_statistic,
+    counter_verified_sparse_hour,
     parse_event,
 )
 
@@ -141,6 +142,8 @@ class PalPulseImporter:
         self._sum_offset = 0.0
         self._last_reconciled_at: int | None = None
         self._gap_count = 0
+        self._sparse_recovered_count = 0
+        self._last_sparse_hour: int | None = None
         self._last_gap_hour: int | None = None
         self._blocked_hour: int | None = None
         self._last_event_at: int | None = None
@@ -160,6 +163,8 @@ class PalPulseImporter:
             "sum_offset": self._sum_offset,
             "last_reconciled_at": self._last_reconciled_at,
             "gap_count": self._gap_count,
+            "sparse_recovered_count": self._sparse_recovered_count,
+            "last_sparse_hour": self._last_sparse_hour,
             "last_gap_hour": self._last_gap_hour,
             "blocked_hour": self._blocked_hour,
             "last_event_at": self._last_event_at,
@@ -192,6 +197,8 @@ class PalPulseImporter:
             self._sum_offset = 0.0
             self._status_message = "Invalid saved Recorder sum offset; review required"
         self._gap_count = int(state.get("gap_count", 0))
+        self._sparse_recovered_count = int(state.get("sparse_recovered_count", 0))
+        self._last_sparse_hour = state.get("last_sparse_hour")
         self._last_gap_hour = state.get("last_gap_hour")
         self._blocked_hour = state.get("blocked_hour")
         self._last_event_at = state.get("last_event_at")
@@ -230,7 +237,7 @@ class PalPulseImporter:
             status = "No Events"
         elif self._blocked_hour is not None:
             status = "Waiting For Complete Hour"
-        elif self._gap_count:
+        elif self._gap_count or self._sparse_recovered_count:
             status = "Active With Gaps"
         elif self._last_hour is None:
             status = "Collecting"
@@ -242,6 +249,8 @@ class PalPulseImporter:
             "last_completed_utc_hour": self._last_hour,
             "blocked_utc_hour": self._blocked_hour,
             "skipped_hours": self._gap_count,
+            "sparse_recovered_hours": self._sparse_recovered_count,
+            "last_sparse_utc_hour": self._last_sparse_hour,
             "last_gap_utc_hour": self._last_gap_hour,
             "pending_minute_records": len(self._records),
             "message": self._status_message,
@@ -485,6 +494,13 @@ class PalPulseImporter:
             if start + HOUR_SECONDS > cutoff:
                 return
             hour = complete_hour(self._records, start)
+            # Give delayed BLE batches a full subsequent hour and recovery
+            # grace before using cumulative endpoints instead of 60 minutes.
+            if (
+                hour is None
+                and now >= start + 2 * HOUR_SECONDS + RECOVERY_GRACE_SECONDS
+            ):
+                hour = counter_verified_sparse_hour(self._records, start)
             skipped = 0
             if hour is None:
                 # Wait for late five-minute BLE polls and buffered API events.
@@ -498,6 +514,13 @@ class PalPulseImporter:
                     if candidate + HOUR_SECONDS > cutoff:
                         break
                     future = complete_hour(self._records, candidate)
+                    if (
+                        future is None
+                        and now >= candidate + 2 * HOUR_SECONDS + RECOVERY_GRACE_SECONDS
+                    ):
+                        future = counter_verified_sparse_hour(
+                            self._records, candidate
+                        )
                     if future is not None:
                         hour = future
                         skipped = (candidate - start) // HOUR_SECONDS
@@ -548,21 +571,32 @@ class PalPulseImporter:
                 self._notify_health()
                 return
 
-            # Only the 60 proven minutes of THIS hour contribute to the sum.
-            # Energy accrued during skipped hours remains intentionally unknown.
+            # Count only this hour's counter-verified energy.
+            # Truly missing hours are never silently assigned to the next.
             next_accounted = self._accounted_pulses + hour.consumption_pulses
             recorder_sum = await self._continuity_sum(hour)
             await self._verified_import([
                 self._statistic(hour, next_accounted, recorder_sum),
             ])
-            if cost_recorder := getattr(self, "cost_recorder", None):
-                await cost_recorder.async_import_verified_hour(
-                    hour, self._records, self._calibration
-                )
+            # Sparse endpoints prove energy but not minute-specific pricing.
+            # Never invent a cost or consume an unverifiable free allowance.
+            if hour.missing_minutes == 0:
+                if cost_recorder := getattr(self, "cost_recorder", None):
+                    await cost_recorder.async_import_verified_hour(
+                        hour, self._records, self._calibration
+                    )
             self._accounted_pulses = next_accounted
             self._last_hour = hour.hour_start
             self._last_timestamp = hour.last_timestamp
             self._last_total = hour.last_total
+            if hour.missing_minutes:
+                self._sparse_recovered_count += 1
+                self._last_sparse_hour = hour.hour_start
+                _LOGGER.warning(
+                    "PalPulse recovered exact UTC hour %s with %d missing "
+                    "interior minute(s); tariff cost withheld",
+                    hour.hour_start, hour.missing_minutes,
+                )
             if skipped:
                 self._gap_count += skipped
                 self._last_gap_hour = start
@@ -574,6 +608,11 @@ class PalPulseImporter:
                     "PalPulse recovered at UTC hour %s after %d skipped "
                     "hour(s) beginning %s; skipped energy not counted",
                     hour.hour_start, skipped, start,
+                )
+            elif hour.missing_minutes:
+                self._status_message = (
+                    f"Counter-verified UTC hour {hour.hour_start}; "
+                    f"{hour.missing_minutes} missing minute(s), cost withheld"
                 )
             else:
                 self._status_message = (

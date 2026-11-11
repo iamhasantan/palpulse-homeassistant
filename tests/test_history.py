@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components" / "palpulse"))
 
-from history import Record, complete_hour, hourly_statistic, normalize_mac, parse_event  # noqa: E402
+from history import (Record, complete_hour, counter_verified_sparse_hour, hourly_statistic, normalize_mac, parse_event)  # noqa: E402
 
 
 def hour_records(hour: int, *, phase: int = 0, base: int = 40000,
@@ -61,6 +61,27 @@ class HistoryTests(unittest.TestCase):
         records = hour_records(start)
         del records[start + 12 * 60]
         self.assertIsNone(complete_hour(records, start))
+
+    def test_exact_energy_from_missing_interior_minute(self):
+        start = 1793728800
+        records = hour_records(start)
+        del records[start + 12 * 60]
+        self.assertIsNone(complete_hour(records, start))
+        hour = counter_verified_sparse_hour(records, start)
+        self.assertIsNotNone(hour)
+        self.assertEqual(hour.missing_minutes, 1)
+        self.assertEqual(hour.consumption_pulses, 600)
+
+    def test_sparse_hour_rejects_missing_endpoint_or_corrupt_counter(self):
+        start = 1793728800
+        records = hour_records(start)
+        del records[start + 59 * 60]
+        self.assertIsNone(counter_verified_sparse_hour(records, start))
+        records = hour_records(start)
+        del records[start + 12 * 60]
+        stamp = start + 13 * 60
+        records[stamp] = Record(stamp, 10, 39999, 3200)
+        self.assertIsNone(counter_verified_sparse_hour(records, start))
 
     def test_duplicate_or_out_of_order_accounting(self):
         start = 1793728800

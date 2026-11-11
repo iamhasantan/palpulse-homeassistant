@@ -198,7 +198,7 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_incomplete_hour_skips_without_misattributing_energy(self):
         await self.feed_hour(BASE, 40000)
-        await self.feed_hour(BASE + 3600, 40600, skip=13)
+        await self.feed_hour(BASE + 3600, 40600, skip=59)
         await self.feed_hour(BASE + 7200, 41200)
         self.assertEqual(len(RECORDER_IMPORTS), 2)
         recovered = RECORDER_IMPORTS[1][1][0]
@@ -208,6 +208,27 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(recovered["sum"], 1200 / 3200)
         self.assertEqual(self.importer.health["skipped_hours"], 1)
         self.assertEqual(self.importer.health["last_gap_utc_hour"], BASE + 3600)
+
+    async def test_sparse_interior_minute_recovers_exact_energy(self):
+        costed_hours = []
+
+        class FakeCostWriter:
+            async def async_import_verified_hour(self, hour, records, calibration):
+                costed_hours.append(hour.hour_start)
+
+        self.importer.cost_recorder = FakeCostWriter()
+        await self.feed_hour(BASE, 40000)
+        await self.feed_hour(BASE + 3600, 40600, skip=13)
+        await self.feed_hour(BASE + 7200, 41200)
+        self.assertEqual(len(RECORDER_IMPORTS), 3)
+        recovered = RECORDER_IMPORTS[1][1][0]
+        self.assertEqual(recovered["start"].timestamp(), BASE + 3600)
+        self.assertAlmostEqual(recovered["sum"], 1200 / CAL)
+        self.assertAlmostEqual(RECORDER_IMPORTS[2][1][0]["sum"], 1800 / CAL)
+        self.assertEqual(self.importer.health["skipped_hours"], 0)
+        self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
+        # Missing minute pricing is not reconstructed from hourly totals.
+        self.assertEqual(costed_hours, [BASE, BASE + 7200])
 
     async def test_second_hour_and_restart(self):
         await self.feed_hour(BASE, 40000)
@@ -290,7 +311,7 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             stamp = BASE + minute * 60
             legacy["records"][str(stamp)] = [10, 40000 + 10 * (minute + 1)]
         for minute in range(60):
-            if minute != 5:
+            if minute != 0:
                 stamp = BASE + 3600 + minute * 60
                 legacy["records"][str(stamp)] = [10, 40600 + 10 * (minute + 1)]
         for hour, base in [(BASE + 7200, 41200), (BASE + 10800, 41800)]:

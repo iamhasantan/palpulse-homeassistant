@@ -15,6 +15,7 @@ from typing import Mapping
 HOUR_SECONDS = 3600
 RECORD_SECONDS = 60
 RECORDS_PER_HOUR = 60
+MAX_SPARSE_MISSING_MINUTES = 4  # Counter-verified energy only.
 MAX_BACKFILL_AGE = 7 * 86400  # older backfills require a separate reviewed import
 FUTURE_TOLERANCE = 120
 MAC_RE = re.compile(r"^[0-9a-f]{12}$", re.IGNORECASE)
@@ -52,6 +53,7 @@ class CompletedHour:
     first_pulses: int
     first_total: int
     last_total: int
+    missing_minutes: int = 0
 
     @property
     def consumption_pulses(self) -> int:
@@ -109,6 +111,63 @@ def complete_hour(records: Mapping[int, Record], start: int) -> CompletedHour | 
         first_pulses=first.pulses,
         first_total=first.total_pulses,
         last_total=last.total_pulses,
+    )
+
+
+def counter_verified_sparse_hour(
+    records: Mapping[int, Record], start: int
+) -> CompletedHour | None:
+    """Recover exact hourly energy from cumulative endpoints, not estimated minutes.
+
+    Both boundary readings are mandatory. Counter values must be monotonic,
+    adjacent native minutes exact, and gaps bounded. Such an hour may NEVER
+    be used to calculate a per-minute tariff.
+    """
+    samples = sorted(
+        (record for stamp, record in records.items()
+         if start <= stamp < start + HOUR_SECONDS),
+        key=lambda record: record.timestamp,
+    )
+    missing = RECORDS_PER_HOUR - len(samples)
+    if not 1 <= missing <= MAX_SPARSE_MISSING_MINUTES:
+        return None
+    phase = samples[0].timestamp % RECORD_SECONDS
+    if (
+        samples[0].timestamp != start + phase
+        or samples[-1].timestamp != start + phase + (RECORDS_PER_HOUR - 1) * RECORD_SECONDS
+    ):
+        return None
+    previous = None
+    previous_index = None
+    for item in samples:
+        offset = item.timestamp - start - phase
+        if offset < 0 or offset % RECORD_SECONDS:
+            return None
+        index = offset // RECORD_SECONDS
+        if index >= RECORDS_PER_HOUR or not 0 <= item.pulses <= 65535:
+            return None
+        if previous is not None:
+            interval = index - previous_index
+            counter_change = item.total_pulses - previous.total_pulses
+            if (
+                interval < 1
+                or counter_change < item.pulses
+                or counter_change > interval * 65535
+                or (interval == 1 and counter_change != item.pulses)
+            ):
+                return None
+        previous, previous_index = item, index
+    first, last = samples[0], samples[-1]
+    if last.total_pulses < first.total_pulses - first.pulses:
+        return None
+    return CompletedHour(
+        hour_start=start,
+        first_timestamp=first.timestamp,
+        last_timestamp=last.timestamp,
+        first_pulses=first.pulses,
+        first_total=first.total_pulses,
+        last_total=last.total_pulses,
+        missing_minutes=missing,
     )
 
 
