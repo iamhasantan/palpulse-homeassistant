@@ -692,9 +692,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_energy_source(self, user_input=None):
         """Choose an energy migration source without touching old statistics."""
         manager = self._history_manager("energy")
-        current = self.config_entry.options.get(
-            CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
-        )
+        current = self.config_entry.options.get(CONF_LEGACY_ENERGY_SOURCE)
         errors = {}
         if user_input is not None:
             source = str(user_input.get(CONF_LEGACY_ENERGY_SOURCE) or "").strip()
@@ -712,7 +710,8 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_show_form(
             step_id="energy_source",
             data_schema=vol.Schema({
-                vol.Required(CONF_LEGACY_ENERGY_SOURCE, default=current):
+                (vol.Required(CONF_LEGACY_ENERGY_SOURCE, default=current)
+                 if current else vol.Required(CONF_LEGACY_ENERGY_SOURCE)):
                     selector.StatisticSelector(),
             }),
             errors=errors,
