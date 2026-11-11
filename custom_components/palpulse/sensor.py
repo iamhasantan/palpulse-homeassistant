@@ -56,6 +56,7 @@ class MigrationSensor(SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_should_poll = False
     _attr_entity_registry_enabled_default = True
+    _attr_entity_registry_visible_default = False  # Open Configure for migration progress.
 
     def __init__(self, meter: str, manager, suffix: str, name: str) -> None:
         self._manager = manager
@@ -218,10 +219,11 @@ class ElectricityPriceSensor(SensorEntity):
 
 
 class DailySupplyChargeSensor(SensorEntity):
-    """Fixed per-day fee, kept separate from HA's energy-only cost totals."""
+    """Optional daily supply-charge detail, hidden from the normal device page."""
 
     _attr_has_entity_name = False
     _attr_should_poll = False
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:cash-clock"
     _attr_suggested_display_precision = 4
 
@@ -234,7 +236,12 @@ class DailySupplyChargeSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return daily_supply_dollars(self._entry.options)
+        # This is an auxiliary sensor. An unfinished tariff should not raise
+        # an exception from an entity property every time HA updates it.
+        try:
+            return daily_supply_dollars(self._entry.options)
+        except (ValueError, TypeError, KeyError):
+            return None
 
 
 class CostImportStatusSensor(SensorEntity):
