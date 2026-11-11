@@ -29,7 +29,8 @@
           "cost_history": "Historical electricity costs",
           "energy_history": "Electricity usage history",
           "dashboard": "PalPulse dashboard setup",
-          "energy_integrity": "Energy history continuity check"
+          "energy_integrity": "Energy history continuity check",
+          "energy_source": "Choose previous energy source"
         }
       },
       "flat": {
@@ -102,7 +103,8 @@
           "energy_preview": "Preview usage history",
           "energy_import": "Import reviewed usage history",
           "energy_resume": "Resume interrupted usage import",
-          "energy_undo": "Undo previously imported usage"
+          "energy_undo": "Undo previously imported usage",
+          "energy_source": "Choose previous energy source"
         }
       },
       "cost_history": {
@@ -272,6 +274,16 @@
       "energy_integrity": {
         "title": "PalPulse energy history integrity (read-only)",
         "description": "**Status:** {status}\n\n**Hours reviewed:** {hours_checked}\n\n**Suspect hourly interval:** {interval}\n\n**Actual meter-state increase:** {expected_change} kWh\n\n**Recorded hourly change:** {recorded_change} kWh\n\n**Candidate cumulative-sum shift:** {required_adjustment} kWh\n\n**Live writer's verified Recorder offset:** {recorder_offset} kWh\n\n{guidance}\n\nThis is only a diagnosis. It performs no backup, repair, import, undo or modification. **Do not change the statistic until you have a full Home Assistant backup including Recorder and have confirmed the adjacent hourly readings.**"
+      },
+      "energy_source": {
+        "title": "Previous energy history",
+        "description": "Choose the existing hourly energy statistic from the **same physical Powerpal meter**. The recorded meter totals must agree at cutover. PalPulse will check both datasets before a separate Preview and will not overwrite the source. This does not migrate an unrelated meter or automatically convert an incompatible baseline.",
+        "data": {
+          "legacy_energy_statistic_id": "Previous energy statistic"
+        },
+        "data_description": {
+          "legacy_energy_statistic_id": "Select the previously recorded cumulative energy source for this Powerpal meter."
+        }
       }
     },
     "error": {
@@ -279,7 +291,9 @@
       "invalid_source": "Choose a valid historical cost sensor or statistic other than PalPulse's target cost statistic.",
       "migration_locked": "Undo the previous cost migration before changing its source or source type. Existing history was left untouched.",
       "confirmation_required": "Tick the confirmation checkbox before any data is changed.",
-      "source_required": "Select a recorded historical electricity cost source, or return to the previous step and skip this part."
+      "source_required": "Select a recorded historical electricity cost source, or return to the previous step and skip this part.",
+      "invalid_energy_source": "Choose a valid existing energy statistic, not the destination PalPulse statistic.",
+      "energy_migration_locked": "This energy source is locked to an existing migration journal. Undo that import before changing sources."
     },
     "abort": {
       "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",
