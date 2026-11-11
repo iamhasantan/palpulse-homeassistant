@@ -31,7 +31,8 @@
           "dashboard": "PalPulse dashboard setup",
           "energy_integrity": "Energy history continuity check",
           "energy_source": "Choose previous energy source",
-          "history_transport": "History delivery and acknowledgments"
+          "history_transport": "History delivery and acknowledgments",
+          "replace_esp32": "Replace an ESP32"
         }
       },
       "flat": {
@@ -295,6 +296,13 @@
         "data_description": {
           "history_ack_service": "Must start with `esphome.` and end with the service name registered by the device."
         }
+      },
+      "replace_esp32": {
+        "title": "Replacing your ESP32",
+        "description": "Only use this if you are moving the **same physical Powerpal meter** to another ESP32 and cannot restore the old NVS checkpoint. Back up Home Assistant first. This arms a **one-time 24-hour** transition; the next fully verified hour from the new ESP32 may have a lower raw counter, but PalPulse keeps your existing Recorder sum and does not guess consumption during the changeover. Never use this for a different meter or changed pulse calibration.",
+        "data": {
+          "confirm_replacement": "I backed up Home Assistant and am replacing only the ESP32 for the same meter."
+        }
       }
     },
     "error": {
@@ -322,7 +330,9 @@
       "wizard_unavailable": "This setup step is unavailable. Restart the PalPulse Configure wizard.",
       "dashboard_guide_complete": "Dashboard instructions closed. No Home Assistant dashboard or settings were changed.",
       "energy_integrity_reviewed": "Read-only energy history diagnosis closed. No statistics were changed.",
-      "energy_integrity_unavailable": "Recorder could not provide the energy history diagnostic: {error}"
+      "energy_integrity_unavailable": "Recorder could not provide the energy history diagnostic: {error}",
+      "replacement_armed": "Replacement mode is armed for 24 hours. PalPulse will accept only a complete verified hour and preserve existing history.",
+      "importer_unavailable": "The live PalPulse importer is not loaded. Check integration status before trying again."
     },
     "progress": {
       "processing_history": "Backing up, processing and verifying {operation}. You can also monitor the PalPulse migration status and progress sensors."
