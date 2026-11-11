@@ -168,13 +168,31 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
             options={"pricing_mode": "custom_time_of_use"},
         )
 
-    async def test_gui_menu_is_available_and_distinguishes_usage_from_costs(self):
+    async def test_gui_menu_groups_common_settings_and_keeps_recovery_available(self):
         menu = await self.flow.async_step_init()
         self.assertEqual(menu["type"], "menu")
-        self.assertIn("energy_history", menu["menu_options"])
-        self.assertIn("cost_history", menu["menu_options"])
-        self.assertIn("free_hours", menu["menu_options"])
-        self.assertIn("overview", menu["menu_options"])
+        self.assertEqual(menu["menu_options"], [
+            "overview", "wizard", "electricity_settings", "history_tools", "advanced",
+        ])
+
+        tariffs = await self.flow.async_step_electricity_settings()
+        self.assertEqual(tariffs["menu_options"], ["pricing", "free_hours"])
+        self.flow.config_entry.options = {"pricing_mode": "home_assistant"}
+        tariffs = await self.flow.async_step_electricity_settings()
+        self.assertEqual(tariffs["menu_options"], ["pricing"])
+
+        history = await self.flow.async_step_history_tools()
+        self.assertEqual(history["menu_options"], [
+            "energy_history", "cost_history", "energy_integrity",
+        ])
+        advanced = await self.flow.async_step_advanced()
+        self.assertEqual(advanced["menu_options"], [
+            "connection_check", "history_transport", "replace_esp32", "dashboard",
+        ])
+        self.assertEqual(
+            (await self.flow.async_step_energy_history())["menu_options"],
+            ["energy_source", "energy_preview", "energy_import", "energy_resume", "energy_undo"],
+        )
 
     async def test_preview_never_imports_without_two_confirmations(self):
         preview = await self.flow.async_step_energy_preview()
