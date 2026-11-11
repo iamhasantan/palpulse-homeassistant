@@ -31,6 +31,10 @@ from .pricing import CONF_FREE_CAP_KWH
 _LOGGER = logging.getLogger(__name__)
 
 
+class UnpriceableHour(ValueError):
+    """Capped-free electricity charge cannot be established from measurements."""
+
+
 class PalPulseCostRecorder:
     """Own the cost statistic, with a ledger separate from the energy importer."""
 
@@ -49,6 +53,7 @@ class PalPulseCostRecorder:
         self._pending: list[dict] = []
         self._tariff_profiles: list[dict] = []
         self._transition_hours: set[int] = set()
+        self._unpriced_hours: set[int] = set()
         self._lock = asyncio.Lock()
 
     @property
@@ -62,6 +67,7 @@ class PalPulseCostRecorder:
             "free_cap_uncertain_dates": sorted(self._free_uncertain_dates),
             "pending_cost_hours": len(self._pending),
             "tariff_transition_hours": sorted(self._transition_hours),
+            "unpriced_hours": sorted(self._unpriced_hours),
         }
 
     def _snapshot(self) -> dict:
@@ -88,6 +94,7 @@ class PalPulseCostRecorder:
         self._error = data.get("last_error")
         self._tariff_profiles = list(data.get("tariff_profiles", []))
         self._transition_hours = set(int(ts) for ts in data.get("tariff_transition_hours", []))
+        self._unpriced_hours = set(int(ts) for ts in data.get("unpriced_hours", []))
         current = dict(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -189,6 +196,13 @@ class PalPulseCostRecorder:
                 self._pending.remove(item)
                 self._error = None
                 await self._store.async_save(self._snapshot())
+            except UnpriceableHour as err:
+                self._pending.remove(item)
+                self._unpriced_hours.add(int(item["start"]))
+                self._error = str(err)
+                await self._store.async_save(self._snapshot())
+                _LOGGER.warning("PalPulse cost hour %s omitted: %s", item["start"], err)
+                continue
             except Exception as err:
                 self._error = f"{type(err).__name__}: {err}"
                 await self._store.async_save(self._snapshot())
@@ -248,7 +262,7 @@ class PalPulseCostRecorder:
             if current_free & uncertain:
                 self._free_uncertain_dates = uncertain
                 await self._store.async_save(self._snapshot())
-                raise ValueError(
+                raise UnpriceableHour(
                     "Capped free allocation is unknown for this free-window "
                     "hour after missing measurements. Paid hours outside the "
                     "free window may still be priced safely"
