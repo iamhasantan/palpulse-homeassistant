@@ -19,7 +19,7 @@ Use the [matching ESPHome component](https://github.com/iamhasantan/palpulse-esp
 
 For reliability testing, enable `reliable_history: true` in your Powerpal BLE sensor YAML and `custom_services: true` under your existing `api:` block. Flash the matching 0.2b1 ESPHome firmware.
 
-Home Assistant registers the device's native action, typically named `esphome.<node_name>_palpulse_ack`. Check its exact name under Developer Tools > Actions. Under **PalPulse > Configure > History delivery and acknowledgments**, enter that full action name. Do not enable acknowledged mode on an older firmware build that lacks the action.
+Home Assistant registers the device's native action, typically named `esphome.<node_name>_palpulse_ack_<meter_hash>`. The ESPHome logs show the eight-digit hash suffix. Check its exact name under Developer Tools > Actions. Under **PalPulse > Configure > History delivery and acknowledgments**, enter that full action name. Do not enable acknowledged mode on an older firmware build that lacks the action.
 
 The ESP32 keeps a separate durable acknowledgment cursor. Your old cumulative energy checkpoint is not erased. Acknowledged replay can only retrieve records still in the Powerpal buffer. If the buffer has rolled past the last acknowledged minute, the firmware stops replay rather than making up readings.
 
