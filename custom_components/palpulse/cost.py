@@ -19,6 +19,31 @@ from .pricing import (
 )
 
 
+
+def free_dates_between(
+    options: Mapping[str, object], time_zone: str,
+    start_utc: int, end_utc: int,
+) -> frozenset[str]:
+    """Find capped-free local dates touched by an unpriced UTC minute range.
+
+    Iterate UTC minutes, not wall-clock minutes, so DST folds and skipped
+    hours cannot manufacture or omit a free allowance.
+    """
+    if end_utc < start_utc or start_utc % 60 or end_utc % 60:
+        raise ValueError("Expected ordered, UTC minute-aligned boundaries")
+    if end_utc == start_utc or not float(options.get(CONF_FREE_CAP_KWH, 0)):
+        return frozenset()
+    zone = ZoneInfo(time_zone)
+    return frozenset(
+        local.date().isoformat()
+        for instant in range(start_utc, end_utc, 60)
+        if free_window_active(
+            options,
+            (local := datetime.fromtimestamp(instant, timezone.utc).astimezone(zone)),
+        )
+    )
+
+
 def is_cost_enabled(options: Mapping[str, object]) -> bool:
     """Leave native Home Assistant pricing alone unless custom mode is chosen."""
     return options.get(CONF_PRICING_MODE, MODE_HOME_ASSISTANT) != MODE_HOME_ASSISTANT
