@@ -305,7 +305,8 @@
         "title": "Electricity prices",
         "menu_options": {
           "pricing": "Change electricity rates",
-          "free_hours": "Free electricity hours"
+          "free_hours": "Free electricity hours",
+          "energy_dashboard_cost": "Fix Energy dashboard costs"
         }
       },
       "history_tools": {
@@ -326,6 +327,13 @@
           "replace_esp32": "Replace an ESP32",
           "dashboard": "Dashboard setup"
         }
+      },
+      "energy_dashboard_cost": {
+        "title": "Energy dashboard cost tracking",
+        "description": "**Status:** {status}\\n\\n{guidance}\\n\\nYour energy source is `{energy_statistic}`. PalPulse calculates costs separately as `{cost_statistic}`.\\n\\nIf you confirm, PalPulse links its **already recorded, verified cost statistic** to the matching grid source. It will not replace a price or cost source you already chose, change any meter reading or rewrite your history. If cost hours are missing, check **PalPulse cost import status** first.",
+        "data": {
+          "confirm_link": "Link verified PalPulse costs to my Energy dashboard"
+        }
       }
     },
     "error": {
@@ -336,7 +344,8 @@
       "source_required": "Select a recorded historical electricity cost source, or return to the previous step and skip this part.",
       "invalid_energy_source": "Choose a valid existing energy statistic, not the destination PalPulse statistic.",
       "energy_migration_locked": "This energy source is locked to an existing migration journal. Undo that import before changing sources.",
-      "invalid_ack_service": "Use the ESPHome action name, for example esphome.powerpal_proxy_palpulse_ack_1a2b3c4d."
+      "invalid_ack_service": "Use the ESPHome action name, for example esphome.powerpal_proxy_palpulse_ack_1a2b3c4d.",
+      "cost_link_not_ready": "The cost link cannot be changed safely yet. Review the status above."
     },
     "abort": {
       "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",
@@ -355,7 +364,9 @@
       "energy_integrity_reviewed": "Read-only energy history diagnosis closed. No statistics were changed.",
       "energy_integrity_unavailable": "Recorder could not provide the energy history diagnostic: {error}",
       "replacement_armed": "Replacement mode is armed for 24 hours. PalPulse will accept only a complete verified hour and preserve existing history.",
-      "importer_unavailable": "The live PalPulse importer is not loaded. Check integration status before trying again."
+      "importer_unavailable": "The live PalPulse importer is not loaded. Check integration status before trying again.",
+      "cost_linked": "The PalPulse cost statistic is linked. Refresh the Energy dashboard.",
+      "cost_link_unavailable": "Energy settings are unavailable: {error}"
     },
     "progress": {
       "processing_history": "Backing up, processing and verifying {operation}. You can also monitor the PalPulse migration status and progress sensors."
