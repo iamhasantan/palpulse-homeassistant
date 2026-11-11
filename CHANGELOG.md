@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2b2
+
+### What's Changed
+
+- **A cleaner PalPulse device page.** Keep live recording and cost health visible, but hide duplicated migration buttons, finished progress indicators and the optional daily supply charge sensor. Existing entity IDs, automations and recorded data are left intact.
+- **Simpler Configure menu.** Everyday options now appear as Status, Set up PalPulse, Electricity prices, History and migration, and Advanced. The full migration, backup-first Import/Undo, connection checks and ESP32 recovery tools are still available in their sections.
+- **Respect existing customisations.** A one-time tidy-up hides only unmodified PalPulse auxiliary entities from older releases. Users who renamed or previously hid their entities are left alone. Manually showing them again persists through restarts.
+- **Less dashboard clutter.** The sample dashboard no longer depends on completed-migration progress entities or the optional daily supply sensor. Existing user-created dashboards are not changed.
+
+### Before updating
+
+This is an **experimental preview**. Back up Home Assistant, including Recorder/history, before upgrading or using migration tools. No historical data, pricing, ESPHome firmware, or migration journals are modified by this interface cleanup. If an automation needs a hidden action entity, it remains available and can be shown in Home Assistant's entity settings.
+
 ## 0.2b1
 
 ### What's Changed
