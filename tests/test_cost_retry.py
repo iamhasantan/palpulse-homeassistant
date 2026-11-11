@@ -3,6 +3,7 @@
 from __future__ import annotations
 import asyncio
 import importlib
+import sys
 import types
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -64,6 +65,69 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.patch_read.stop)
         self.addCleanup(self.patch_write.stop)
         await self.recorder.async_load()
+
+    async def test_pending_cost_recovers_at_startup_without_new_meter_data(self):
+        hour, samples = build_hour(BASE, 40000)
+        with patch.object(
+            self.recorder, "_write_hour",
+            AsyncMock(side_effect=RuntimeError("Recorder temporarily unavailable")),
+        ):
+            await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
+
+        # Simulate HA starting after a crash. No Powerpal minute events arrive.
+        restarted = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await restarted.async_load()
+        events = []
+        stopped = []
+
+        timer = types.ModuleType("homeassistant.helpers.event")
+        def track_interval(_hass, callback, period):
+            self.assertEqual(period.total_seconds(), 300)
+            events.append(callback)
+            return lambda: stopped.append(True)
+        timer.async_track_time_interval = track_interval
+        with patch.dict(sys.modules, {"homeassistant.helpers.event": timer}):
+            await restarted.async_start()
+        self.assertEqual(restarted.status["pending_cost_hours"], 0)
+        self.assertAlmostEqual(self.rows[BASE]["sum"], 0.0375)
+        self.assertGreaterEqual(restarted.status["recovery_attempts"], 1)
+        await restarted.async_flush()
+        self.assertEqual(stopped, [True])
+
+    async def test_periodic_cost_retry_does_not_need_new_energy_hour(self):
+        hour, samples = build_hour(BASE, 40000)
+        with patch.object(
+            self.recorder, "_write_hour", AsyncMock(side_effect=RuntimeError("Transient failure"))
+        ):
+            await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
+
+        registered = []
+        timer = types.ModuleType("homeassistant.helpers.event")
+        timer.async_track_time_interval = lambda _hass, callback, _period: (
+            registered.append(callback) or (lambda: None)
+        )
+        # Energy dashboard check is not relevant to timer scheduling.
+        with patch.dict(sys.modules, {"homeassistant.helpers.event": timer}):
+            with patch.object(self.recorder, "async_refresh_cost_link", AsyncMock()):
+                await self.recorder.async_start()
+                self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
+                self.assertEqual(len(registered), 1)
+                await registered[0](None)
+        await self.recorder.async_flush()
+
+    async def test_unjournalled_existing_hour_must_not_silently_disappear(self):
+        hour, samples = build_hour(BASE, 40000)
+        with patch.object(
+            self.recorder, "_write_hour", AsyncMock(side_effect=RuntimeError("Recorder down"))
+        ):
+            await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.recorder._last_hour = BASE
+        # Simulate a lost Recorder row despite the Store cursor.
+        await self.recorder.async_recover_pending()
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
+        self.assertIn("missing", self.recorder.status["last_error"].lower())
 
     async def test_failure_persists_cost_hour_and_replays_after_restart(self):
         hour, samples = build_hour(BASE, 40000)
