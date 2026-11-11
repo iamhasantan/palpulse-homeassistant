@@ -153,6 +153,8 @@ class LiveHistoryStatusSensor(SensorEntity):
             "last_completed_utc_hour": self._as_utc_iso(status["last_completed_utc_hour"]),
             "blocked_utc_hour": self._as_utc_iso(status["blocked_utc_hour"]),
             "skipped_hours": status["skipped_hours"],
+            "sparse_recovered_hours": status["sparse_recovered_hours"],
+            "last_sparse_utc_hour": self._as_utc_iso(status["last_sparse_utc_hour"]),
             "last_gap_utc_hour": self._as_utc_iso(status["last_gap_utc_hour"]),
             "pending_minute_records": status["pending_minute_records"],
             "message": status["message"],
