@@ -439,7 +439,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             weekend = str(prior.get("weekend_free", "")).strip()
             if weekday and weekday == weekend and weekday.count("-") == 1 and "," not in weekday:
                 return tuple(weekday.split("-", 1))
-            return ("11:00", "16:00")
+            return (None, None)  # No retailer-specific default for a generic tariff
 
         start_default, end_default = window_defaults()
         errors = {}
@@ -463,11 +463,11 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_show_form(
             step_id="free_hours",
             data_schema=vol.Schema({
-                vol.Required("free_start", default=start_default): selector.TimeSelector(),
-                vol.Required("free_end", default=end_default): selector.TimeSelector(),
+                (vol.Required("free_start", default=start_default) if start_default else vol.Required("free_start")): selector.TimeSelector(),
+                (vol.Required("free_end", default=end_default) if end_default else vol.Required("free_end")): selector.TimeSelector(),
                 vol.Required(
                     CONF_FREE_CAP_KWH,
-                    default=prior.get(CONF_FREE_CAP_KWH, 15),
+                    default=prior.get(CONF_FREE_CAP_KWH, 0),
                 ): selector.NumberSelector(selector.NumberSelectorConfig(
                     min=0, max=10000, step="any",
                     mode=selector.NumberSelectorMode.BOX,
