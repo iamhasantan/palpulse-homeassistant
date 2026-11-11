@@ -9,7 +9,7 @@ durable checkpointing, and duplicate replay is reconciled.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import logging
 import math
 from zoneinfo import ZoneInfo
@@ -22,8 +22,8 @@ from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .cost import is_cost_enabled, price_verified_hour, supply_charge_for_dates
-from .pricing import CONF_FREE_CAP_KWH, free_window_active
+from .cost import (free_dates_between, is_cost_enabled, price_verified_hour, supply_charge_for_dates)
+from .pricing import CONF_FREE_CAP_KWH
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class PalPulseCostRecorder:
         self._sum = 0.0
         self._last_supply_date: str | None = None
         self._free_used: dict[str, float] = {}
+        self._free_uncertain_dates: set[str] = set()
         self._error: str | None = None
         self._lock = asyncio.Lock()
 
@@ -52,6 +53,7 @@ class PalPulseCostRecorder:
             "cumulative_cost": self._sum,
             "last_error": self._error,
             "enabled": is_cost_enabled(self.entry.options),
+            "free_cap_uncertain_dates": sorted(self._free_uncertain_dates),
         }
 
     def _snapshot(self) -> dict:
@@ -60,6 +62,7 @@ class PalPulseCostRecorder:
             "sum": self._sum,
             "last_supply_date": self._last_supply_date,
             "free_used": self._free_used,
+            "free_cap_uncertain_dates": sorted(self._free_uncertain_dates),
         }
 
     async def async_load(self) -> None:
@@ -68,6 +71,7 @@ class PalPulseCostRecorder:
         self._sum = float(data.get("sum", 0))
         self._last_supply_date = data.get("last_supply_date")
         self._free_used = {str(k): float(v) for k, v in data.get("free_used", {}).items()}
+        self._free_uncertain_dates = set(data.get("free_cap_uncertain_dates", []))
         if not math.isfinite(self._sum):
             raise ValueError("PalPulse cost ledger has an invalid cumulative sum")
 
@@ -123,20 +127,37 @@ class PalPulseCostRecorder:
         first_local = datetime.fromtimestamp(start, timezone.utc).astimezone(local_zone)
         first_date = first_local.date().isoformat()
         cap = float(options.get(CONF_FREE_CAP_KWH, 0))
+        uncertain = set(self._free_uncertain_dates)
         if cap > 0:
-            # A gap or a mid-window activation may consume an unknown portion
-            # of today's capped free allowance. Do not assume it was zero.
-            gap = self._last_hour is not None and start > self._last_hour + 3600
-            preceding = first_local - timedelta(minutes=1)
-            started_mid_window = free_window_active(options, preceding)
-            if ((gap and first_date == datetime.fromtimestamp(
-                    self._last_hour, timezone.utc
-                ).astimezone(local_zone).date().isoformat())
-                or (self._last_hour is None and started_mid_window)):
+            # Only gaps that overlap an actual capped-free window make its
+            # allowance uncertain. A missing paid/off-peak hour must NOT stop
+            # unrelated paid cost hours for the rest of the day.
+            if self._last_hour is not None and start > self._last_hour + 3600:
+                uncertain.update(free_dates_between(
+                    options, self.hass.config.time_zone,
+                    self._last_hour + 3600, start,
+                ))
+            elif self._last_hour is None:
+                # Enabling pricing mid-day may follow a free window already
+                # consumed before this ledger existed. Treat later free
+                # intervals on that date as uncertain, even after paid hours.
+                midnight = first_local.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                uncertain.update(free_dates_between(
+                    options, self.hass.config.time_zone,
+                    int(midnight.timestamp()), start,
+                ))
+            current_free = free_dates_between(
+                options, self.hass.config.time_zone, start, start + 3600,
+            )
+            if current_free & uncertain:
+                self._free_uncertain_dates = uncertain
+                await self._store.async_save(self._snapshot())
                 raise ValueError(
-                    "Capped free energy allocation cannot be established after "
-                    "a missing hour or mid-window activation. Wait for a new "
-                    "local billing day; no cost was invented"
+                    "Capped free allocation is unknown for this free-window "
+                    "hour after missing measurements. Paid hours outside the "
+                    "free window may still be priced safely"
                 )
 
         samples = [record for stamp, record in records.items()
@@ -191,6 +212,9 @@ class PalPulseCostRecorder:
                 raise ValueError("Recorder did not confirm the cost write")
         self._last_hour = start
         self._sum = next_sum
+        self._free_uncertain_dates = {
+            day for day in uncertain if day >= first_date
+        }
         self._last_supply_date = charged_date
         # Only retain current and previous day. The full ledger is unnecessary.
         self._free_used = {

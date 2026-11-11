@@ -19,6 +19,7 @@ pricing = importlib.import_module("isolated_palpulse_cost.pricing")
 cost_for_verified_hour = cost.cost_for_verified_hour
 supply_charge_for_dates = cost.supply_charge_for_dates
 price_verified_hour = cost.price_verified_hour
+free_dates_between = cost.free_dates_between
 from isolated_palpulse_cost.pricing import (
     CONF_PRICING_MODE, MODE_TOU, CONF_PEAK_CENTS, CONF_OFFPEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_SUPPLY_CENTS,
@@ -134,6 +135,46 @@ class CostTests(unittest.TestCase):
         )
         self.assertEqual(amount, 0)
         self.assertEqual(used["2026-11-08"], 1.0)
+
+    def test_missing_paid_hour_does_not_poison_free_cap(self):
+        tz = ZoneInfo("Australia/Melbourne")
+        o = options()
+        o[CONF_FREE_CAP_KWH] = 15
+        start = int(datetime(2026, 11, 9, 8, tzinfo=tz).timestamp())
+        self.assertEqual(
+            free_dates_between(o, "Australia/Melbourne", start, start + 3600),
+            frozenset(),
+        )
+
+    def test_only_missing_free_minutes_mark_daily_cap_uncertain(self):
+        tz = ZoneInfo("Australia/Melbourne")
+        o = options()
+        o[CONF_FREE_CAP_KWH] = 15
+        start = int(datetime(2026, 11, 9, 10, tzinfo=tz).timestamp())
+        self.assertEqual(
+            free_dates_between(o, "Australia/Melbourne", start, start + 3600),
+            frozenset(),
+        )
+        self.assertEqual(
+            free_dates_between(o, "Australia/Melbourne", start, start + 7200),
+            frozenset({"2026-11-09"}),
+        )
+        self.assertEqual(
+            free_dates_between(o, "Australia/Melbourne", start + 4 * 3600,
+                               start + 6 * 3600),
+            frozenset(),
+        )
+
+    def test_initial_activation_after_free_window_detects_unknown_allocation(self):
+        tz = ZoneInfo("Australia/Melbourne")
+        o = options()
+        o[CONF_FREE_CAP_KWH] = 15
+        midnight = int(datetime(2026, 11, 9, tzinfo=tz).timestamp())
+        at_fourteen = int(datetime(2026, 11, 9, 14, tzinfo=tz).timestamp())
+        self.assertEqual(
+            free_dates_between(o, "Australia/Melbourne", midnight, at_fourteen),
+            frozenset({"2026-11-09"}),
+        )
 
     def test_partial_hour_is_rejected(self):
         tz = ZoneInfo("Australia/Melbourne")
