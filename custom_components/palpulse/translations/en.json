@@ -21,19 +21,11 @@
       "init": {
         "title": "PalPulse settings",
         "menu_options": {
-          "wizard": "Guided setup wizard",
-          "overview": "Overview and health",
-          "pricing": "Electricity pricing",
-          "free_hours": "Free electricity hours",
-          "historical_costs": "Previous cost history",
-          "cost_history": "Historical electricity costs",
-          "energy_history": "Electricity usage history",
-          "dashboard": "PalPulse dashboard setup",
-          "energy_integrity": "Energy history continuity check",
-          "energy_source": "Choose previous energy source",
-          "history_transport": "History delivery and acknowledgments",
-          "replace_esp32": "Replace an ESP32",
-          "connection_check": "Check meter connection"
+          "overview": "Status",
+          "wizard": "Set up PalPulse",
+          "electricity_settings": "Electricity prices",
+          "history_tools": "History and migration",
+          "advanced": "Advanced"
         }
       },
       "flat": {
@@ -308,6 +300,32 @@
       "connection_check": {
         "title": "PalPulse connection check",
         "description": "**Meter events:** {status}\n\n**Last event (UTC):** {last_event}\n\n**Last complete hour (UTC):** {completed_hour}\n\n**Acknowledgment action:** {ack}\n\n**Action status:** {ack_ready}\n\n**Last error:** {error}\n\nIf there are no events, check ESPHome pairing, `history_events: true` and **Allow the device to perform Home Assistant actions**. This screen never modifies the meter or Recorder."
+      },
+      "electricity_settings": {
+        "title": "Electricity prices",
+        "menu_options": {
+          "pricing": "Change electricity rates",
+          "free_hours": "Free electricity hours"
+        }
+      },
+      "history_tools": {
+        "title": "History and migration",
+        "description": "Import past readings or check your recorded energy history. Back up Home Assistant, including its Recorder database, before importing or undoing anything.",
+        "menu_options": {
+          "energy_history": "Energy history",
+          "cost_history": "Cost history",
+          "energy_integrity": "Check energy history"
+        }
+      },
+      "advanced": {
+        "title": "Advanced settings",
+        "description": "Connection checks, experimental history delivery and hardware recovery. These are normally only needed when troubleshooting or changing hardware.",
+        "menu_options": {
+          "connection_check": "Check connection",
+          "history_transport": "History delivery",
+          "replace_esp32": "Replace an ESP32",
+          "dashboard": "Dashboard setup"
+        }
       }
     },
     "error": {
