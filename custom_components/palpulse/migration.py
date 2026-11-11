@@ -37,8 +37,7 @@ from .migration_plan import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-LEGACY_STATISTIC_ID = "sensor.powerpal_proxy_powerpal_total_energy"  # Prior installations only
-CONF_LEGACY_ENERGY_SOURCE = "legacy_energy_statistic_id"
+from .const import CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
 EARLIEST = datetime(2010, 1, 1, tzinfo=timezone.utc)
 PREVIEW_SECONDS = 600
 CHUNK_SIZE = 240
