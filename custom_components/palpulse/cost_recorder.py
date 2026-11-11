@@ -58,6 +58,8 @@ class PalPulseCostRecorder:
         self._unsubscribe_retry = None
         self._last_retry_utc: int | None = None
         self._retry_count = 0
+        self._energy_cost_link = "unknown"
+        self._energy_cost_guidance = "Checking Home Assistant Energy settings"
 
     @property
     def status(self) -> dict:
@@ -73,6 +75,8 @@ class PalPulseCostRecorder:
             "unpriced_hours": sorted(self._unpriced_hours),
             "last_retry_utc": self._last_retry_utc,
             "recovery_attempts": self._retry_count,
+            "energy_dashboard_cost_link": self._energy_cost_link,
+            "energy_dashboard_cost_guidance": self._energy_cost_guidance,
         }
 
     def _snapshot(self) -> dict:
@@ -132,10 +136,29 @@ class PalPulseCostRecorder:
                 self.hass, self._periodic_retry, timedelta(minutes=5),
             )
         await self.async_recover_pending()
+        await self.async_refresh_cost_link()
+
+    async def async_refresh_cost_link(self) -> None:
+        """Diagnose a missing Energy dashboard cost mapping, never change it."""
+        try:
+            from .dashboard_cost import async_check_cost_link
+            result = await async_check_cost_link(
+                self.hass, f"{DOMAIN}:powerpal_{self.mac}_energy",
+                self.statistic_id,
+            )
+            self._energy_cost_link = result.status
+            self._energy_cost_guidance = result.guidance
+        except Exception as err:
+            self._energy_cost_link = "unavailable"
+            self._energy_cost_guidance = (
+                "Cannot read Energy dashboard configuration: "
+                f"{type(err).__name__}"
+            )
 
     async def _periodic_retry(self, _now) -> None:
         """A failed Recorder write is retried even after an ESP32/HA outage."""
         await self.async_recover_pending()
+        await self.async_refresh_cost_link()
 
     async def async_recover_pending(self) -> None:
         """Idempotent, independently scheduled recovery from the durable journal."""
