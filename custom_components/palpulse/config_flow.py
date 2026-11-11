@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 
 from .const import CONF_METER_MAC, DOMAIN
 from .history import normalize_mac
+from .migration import CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
@@ -79,7 +80,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -610,12 +611,41 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
         return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
 
+    async def async_step_energy_source(self, user_input=None):
+        """Choose an energy migration source without touching old statistics."""
+        manager = self._history_manager("energy")
+        current = self.config_entry.options.get(
+            CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
+        )
+        errors = {}
+        if user_input is not None:
+            source = str(user_input.get(CONF_LEGACY_ENERGY_SOURCE) or "").strip()
+            target = f"{DOMAIN}:powerpal_{self.config_entry.data[CONF_METER_MAC]}_energy"
+            if not source or not _SOURCE_ID_RE.fullmatch(source) or source == target:
+                errors["base"] = "invalid_energy_source"
+            elif (manager and manager.journal.get("status") not in
+                  {None, "undone"} and source != manager.source_id):
+                errors["base"] = "energy_migration_locked"
+            else:
+                return self.async_create_entry(
+                    data={**self.config_entry.options,
+                          CONF_LEGACY_ENERGY_SOURCE: source}
+                )
+        return self.async_show_form(
+            step_id="energy_source",
+            data_schema=vol.Schema({
+                vol.Required(CONF_LEGACY_ENERGY_SOURCE, default=current):
+                    selector.StatisticSelector(),
+            }),
+            errors=errors,
+        )
+
     async def async_step_energy_history(self, user_input=None):
         """Guided workflow, separate from tariff configuration."""
         return self.async_show_menu(
             step_id="energy_history",
             menu_options=[
-                "energy_preview", "energy_import", "energy_resume", "energy_undo",
+                "energy_source", "energy_preview", "energy_import", "energy_resume", "energy_undo",
             ],
         )
 
