@@ -80,7 +80,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "replace_esp32", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -610,6 +610,21 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     def _history_manager(self, kind: str):
         key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
         return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
+
+    async def async_step_replace_esp32(self, user_input=None):
+        """Explicit, time-limited rebase for a replacement ESP32 checkpoint."""
+        if user_input is not None and user_input.get("confirm_replacement") is True:
+            importer = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+            if importer is None:
+                return self.async_abort(reason="importer_unavailable")
+            await importer.async_arm_device_replacement()
+            return self.async_abort(reason="replacement_armed")
+        return self.async_show_form(
+            step_id="replace_esp32",
+            data_schema=vol.Schema({
+                vol.Required("confirm_replacement", default=False): bool,
+            }),
+        )
 
     async def async_step_history_transport(self, user_input=None):
         """Opt in to the ESPHome acknowledged native-API history action."""
