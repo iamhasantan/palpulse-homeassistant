@@ -56,6 +56,16 @@ class ManagerDouble:
 
 
 class SensorTests(unittest.IsolatedAsyncioTestCase):
+    def test_auxiliary_sensors_are_hidden_but_keep_functional_entity_classes(self):
+        self.assertFalse(entities.MigrationSensor._attr_entity_registry_visible_default)
+        self.assertFalse(entities.DailySupplyChargeSensor._attr_entity_registry_visible_default)
+        self.assertTrue(entities.LiveHistoryStatusSensor._attr_entity_registry_enabled_default)
+
+    def test_incomplete_tariff_does_not_raise_from_auxiliary_supply_sensor(self):
+        entry = types.SimpleNamespace(options={"pricing_mode": "flat"})
+        supply = entities.DailySupplyChargeSensor(test_importer.MAC, entry, "AUD")
+        self.assertIsNone(supply.native_value)
+
     async def test_entities_show_real_progress_and_recovery_status(self):
         manager = ManagerDouble()
         importer = test_importer.palpulse.PalPulseImporter(
