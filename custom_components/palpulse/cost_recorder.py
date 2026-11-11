@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import math
+import time
 
 from .history import CompletedHour, Record
 from zoneinfo import ZoneInfo
@@ -46,6 +47,8 @@ class PalPulseCostRecorder:
         self._free_uncertain_dates: set[str] = set()
         self._error: str | None = None
         self._pending: list[dict] = []
+        self._tariff_profiles: list[dict] = []
+        self._transition_hours: set[int] = set()
         self._lock = asyncio.Lock()
 
     @property
@@ -58,6 +61,7 @@ class PalPulseCostRecorder:
             "enabled": is_cost_enabled(self.entry.options),
             "free_cap_uncertain_dates": sorted(self._free_uncertain_dates),
             "pending_cost_hours": len(self._pending),
+            "tariff_transition_hours": sorted(self._transition_hours),
         }
 
     def _snapshot(self) -> dict:
@@ -68,6 +72,8 @@ class PalPulseCostRecorder:
             "free_used": self._free_used,
             "free_cap_uncertain_dates": sorted(self._free_uncertain_dates),
             "pending": self._pending,
+            "tariff_profiles": self._tariff_profiles,
+            "tariff_transition_hours": sorted(self._transition_hours),
             "last_error": self._error,
         }
 
@@ -80,6 +86,23 @@ class PalPulseCostRecorder:
         self._free_uncertain_dates = set(data.get("free_cap_uncertain_dates", []))
         self._pending = list(data.get("pending", []))
         self._error = data.get("last_error")
+        self._tariff_profiles = list(data.get("tariff_profiles", []))
+        self._transition_hours = set(int(ts) for ts in data.get("tariff_transition_hours", []))
+        current = dict(self.entry.options)
+        zone = self.hass.config.time_zone
+        if not self._tariff_profiles:
+            self._tariff_profiles = [{"from": 0, "options": current, "timezone": zone}]
+        elif (
+            self._tariff_profiles[-1]["options"] != current
+            or self._tariff_profiles[-1]["timezone"] != zone
+        ):
+            now = int(time.time())
+            hour = now // 3600 * 3600
+            self._transition_hours.add(hour)
+            self._tariff_profiles.append({
+                "from": hour + 3600, "options": current, "timezone": zone,
+            })
+        await self._store.async_save(self._snapshot())
         if not math.isfinite(self._sum):
             raise ValueError("PalPulse cost ledger has an invalid cumulative sum")
 
@@ -105,6 +128,13 @@ class PalPulseCostRecorder:
         if not is_cost_enabled(self.entry.options):
             return
         async with self._lock:
+            if hour.hour_start in self._transition_hours:
+                self._error = (
+                    "Tariff changed during this UTC hour. No charge was "
+                    "invented for the ambiguous transition"
+                )
+                await self._store.async_save(self._snapshot())
+                return
             if not any(int(item["start"]) == hour.hour_start for item in self._pending):
                 if len(self._pending) >= 168:
                     self._error = "Pending cost journal full (168 hours); review required"
@@ -119,6 +149,10 @@ class PalPulseCostRecorder:
                     self._error = "Incomplete cost hour cannot be queued"
                     await self._store.async_save(self._snapshot())
                     return
+                profile = max(
+                    (p for p in self._tariff_profiles if int(p["from"]) <= hour.hour_start),
+                    key=lambda p: int(p["from"]),
+                )
                 self._pending.append({
                     "start": hour.hour_start,
                     "first_timestamp": hour.first_timestamp,
@@ -128,8 +162,8 @@ class PalPulseCostRecorder:
                     "last_total": hour.last_total,
                     "calibration": calibration,
                     "samples": [[r.timestamp, r.pulses, r.total_pulses] for r in samples],
-                    "options": dict(self.entry.options),
-                    "timezone": self.hass.config.time_zone,
+                    "options": dict(profile["options"]),
+                    "timezone": str(profile["timezone"]),
                 })
                 self._pending.sort(key=lambda item: int(item["start"]))
                 await self._store.async_save(self._snapshot())
