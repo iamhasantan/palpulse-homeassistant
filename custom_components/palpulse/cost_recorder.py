@@ -60,9 +60,19 @@ class PalPulseCostRecorder:
         self._retry_count = 0
         self._energy_cost_link = "unknown"
         self._energy_cost_guidance = "Checking Home Assistant Energy settings"
+        self.energy_importer = None
 
     @property
     def status(self) -> dict:
+        last_energy = (
+            self.energy_importer.health.get("last_completed_utc_hour")
+            if self.energy_importer is not None else None
+        )
+        lag_hours = (
+            max(0, int((last_energy - self._last_hour) // 3600))
+            if last_energy is not None and self._last_hour is not None
+            else None
+        )
         return {
             "statistic_id": self.statistic_id,
             "last_costed_hour": self._last_hour,
@@ -77,6 +87,7 @@ class PalPulseCostRecorder:
             "recovery_attempts": self._retry_count,
             "energy_dashboard_cost_link": self._energy_cost_link,
             "energy_dashboard_cost_guidance": self._energy_cost_guidance,
+            "energy_to_cost_lag_hours": lag_hours,
         }
 
     def _snapshot(self) -> dict:
