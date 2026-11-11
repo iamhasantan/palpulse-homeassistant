@@ -129,6 +129,25 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
         self.assertIn("missing", self.recorder.status["last_error"].lower())
 
+    async def test_link_setting_change_is_not_a_tariff_transition(self):
+        self.assertEqual(len(self.recorder._tariff_profiles), 1)
+        # The user's consent to maintain an Energy dashboard link, changes to
+        # the ESPHome ACK action or historical migration source are not prices.
+        self.entry.options["auto_link_energy_cost"] = True
+        self.entry.options["history_ack_service"] = "esphome.test_ack"
+        self.entry.options["legacy_energy_statistic_id"] = "sensor.previous"
+        recovered = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await recovered.async_load()
+        self.assertEqual(len(recovered._tariff_profiles), 1)
+        self.assertEqual(recovered.status["tariff_transition_hours"], [])
+
+        # Genuine tariff updates still create a protected transition hour.
+        self.entry.options["flat_cents_per_kwh"] = 24.0
+        changed = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await changed.async_load()
+        self.assertEqual(len(changed._tariff_profiles), 2)
+        self.assertEqual(len(changed.status["tariff_transition_hours"]), 1)
+
     async def test_failure_persists_cost_hour_and_replays_after_restart(self):
         hour, samples = build_hour(BASE, 40000)
         with patch.object(self.recorder, "_write_hour",
