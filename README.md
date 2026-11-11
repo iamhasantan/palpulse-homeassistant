@@ -361,15 +361,24 @@ It is not the legacy migration progress indicator. Inspect it for:
 
 - `last_event_received`, `last_completed_utc_hour`, `blocked_utc_hour`
 - `skipped_hours`, `last_gap_utc_hour`, `pending_minute_records`
+- `sparse_recovered_hours`, `last_sparse_utc_hour` (0.1.0b15)
 - `message` and `last_import_error`
 
 Statuses include **Collecting**, **Active**, **Waiting For Complete Hour**,
 **Active With Gaps**, **No Events**, **Recorder Error** and **Halted**.
 
-A missing hour is not converted into a guessed value. After the later hour
-is fully verified and the 15-minute late-event grace expires, PalPulse skips
-the unverified hour and imports the later hour's consumption only. Cumulative
-sums are carried forward from the last verified hour, with no catch-up spike.
+A **fully missing hour or one without verified endpoints** is never filled
+with an estimate. After the 15-minute late-event grace and a complete
+following hour, PalPulse can recover an exact energy-only hourly total if
+the first and last native-minute counter readings are present and no more
+than four interior minutes are absent. It checks observed counter continuity
+and reports each recovery in diagnostics. Hours with larger gaps, counter
+conflicts or a missing boundary remain unfilled. Verified later hours are
+still imported without assigning lost energy to the wrong hour.
+
+**Costs are stricter:** any hour missing even one minute is **not** costed,
+because a cumulative meter cannot prove the precise time-of-use/free-cap
+charge for missing individual minutes.
 
 If an older version was already stalled, the saved minute buffer and cursors
 are loaded automatically after the integration restarts. Later valid hours
@@ -564,17 +573,20 @@ existing blocks. See the companion PalPulse ESPHome PR for the revised code.
    `meter`, `timestamp` (Unix UTC seconds), `pulses`,
    `total_pulses`, `pulses_per_kwh`.
 3. This integration verifies the configured MAC, calibration, timestamp range,
-   monotonic cumulative counts and 60 consecutive native-minute records
-   **before** importing any hourly statistics.
+   and cumulative counter continuity. A fully observed 60-minute hour can be
+   used for both energy and tariff accounting. Starting in 0.1.0b15, at most
+   four missing *interior* readings can be accepted for **energy only**, but
+   only with exact first/last meter boundaries and no counter conflicts.
 4. It stores a per-meter ledger under Home Assistant `.storage`, and uses
    `async_add_external_statistics` to import aligned UTC hour starts. Home
    Assistant Recorder can upsert the same hour idempotently.
 5. The first accepted complete hour establishes a zero-sum baseline, avoiding
    the existing meter's accumulated total appearing as new consumption.
-6. A missing minute or hour is left unknown. PalPulse waits for late
-   delivery, then advances to a later verified 60-record hour after a 15-minute
-   grace period. Only the later hour's measured consumption is added to the
-   cumulative statistic, never the unrecorded interval.
+6. An entirely missing hour or an hour without verified counter endpoints is
+   left unknown. Following the recovery grace, a bounded interior-minute gap
+   can be recovered exactly from its meter-counter endpoints for **energy
+   only**. If counter evidence is insufficient, PalPulse advances to a later
+   independently verified hour without counting the lost interval.
 
 The resulting external statistic is **not** the existing
 `sensor.powerpal_total_energy`. The original live sensor remains unchanged.
@@ -586,9 +598,10 @@ Do not configure both as separate grid-consumption sources.
   historical statistics via Home Assistant's supported API, not 5-minute
   recorder state backfills.
 - The ESPHome-to-HA event transport is not acknowledged or replayable by
-  this beta. If a native-minute event is permanently lost, that hour is
-  reported as missing. A subsequent verified complete hour can resume the
-  series without counting missing consumption.
+  this beta. Exact energy recovery requires both hourly counter endpoints,
+  stable timestamps, monotonic counter evidence and no more than four
+  missing interior records. Any other permanent loss remains a gap; the
+  next verified hour resumes without assigning unknown energy.
 - If the Powerpal counter resets, calibration changes or conflicting records
   arrive, imports halt for manual investigation rather than guessing a value.
 - Only the last seven days are accepted. Older imports need a separate
@@ -677,8 +690,13 @@ refuses altered or unjournalled rows.
 
 Costs use native one-minute meter timestamps so free and peak transitions
 are assigned accurately. A daily free allowance is shared across local
-hours, including DST days. If free allowance use cannot be established after
-a gap, the cost writer fails closed instead of guessing.
+hours, including DST days. Starting in 0.1.0b15, missing paid minutes outside
+the capped-free window do **not** block all later paid hours. Only missing
+minutes that overlap a capped-free window make its local day's allowance
+uncertain. The cost writer refuses affected free-window hours, persists
+uncertain dates across restarts, and continues individually verified paid
+hours. It does not invent a cost for the missing hour. See the cost import
+status diagnostic's `free_cap_uncertain_dates` attribute.
 
 **Supported**: flat rates, time-of-use rates, weekday/weekend schedules,
 free windows, capped free electricity, paid overflow and optional daily
