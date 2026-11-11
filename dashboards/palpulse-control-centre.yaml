@@ -75,55 +75,29 @@ views:
     cards:
       - type: markdown
         content: |
-          ## Historical imports
-          Inspect status here. To choose a source, Preview, Import,
-          Resume or Undo, use **Settings > Devices & services >
-          Integrations > PalPulse for Home Assistant > Configure**.
-          Never use Import/Undo before checking your full backup.
-      - type: entities
-        title: Powerpal usage history
-        entities:
-          - entity: sensor.palpulse_migration_status
-            name: Usage history status
-          - entity: sensor.palpulse_migration_progress
-            name: Usage history progress
-      - type: gauge
-        entity: sensor.palpulse_migration_progress
-        name: Usage history imported
-        min: 0
-        max: 100
-      - type: entities
-        title: Historical electricity costs
-        entities:
-          - entity: sensor.palpulse_historical_cost_migration_status
-            name: Historical cost status
-          - entity: sensor.palpulse_historical_cost_migration_progress
-            name: Historical cost progress
-      - type: gauge
-        entity: sensor.palpulse_historical_cost_migration_progress
-        name: Cost history imported
-        min: 0
-        max: 100
+          ## Past electricity readings
+          Need to bring over readings from another integration?
+          Open **Settings > Devices & services > PalPulse for Home
+          Assistant > Configure > History and migration**.
 
-  - title: Tariff
-    path: tariff
+          Start with the read-only preview. Review your data and take
+          a Home Assistant backup including Recorder before importing
+          or undoing anything. Historical gaps are not automatically
+          filled.
+
+  - title: Pricing
+    path: pricing
     icon: mdi:cash-clock
     cards:
       - type: markdown
         content: |
-          ## Your electricity tariff
-          Edit rates and free hours in PalPulse **Configure > Electricity pricing**
-          or the **Setup wizard**. This is an overview only.
-          Your cost statistic is separate from daily supply charges.
-      - type: entities
-        title: Pricing and supply
-        entities:
-          - entity: sensor.palpulse_daily_supply_charge
-            name: Daily supply charge
-          - entity: sensor.palpulse_electricity_unit_price
-            name: Current unit price (only for uncapped tariffs)
-      - type: markdown
-        content: |
-          **Red Energy free power:** For capped tariffs, PalPulse intentionally
-          does not show a misleading instantaneous price entity. Check
-          the daily cost statistic after a complete verified hour instead.
+          ## Electricity prices
+          Check your electricity rates and free-power window under
+          **PalPulse > Configure > Electricity prices**.
+
+          Your plan's daily supply charge is part of the configured
+          cost calculation. The separate daily supply sensor is optional
+          and hidden from the standard device page.
+
+          **Early preview.** Compare estimated charges with your
+          retailer's bill. An incomplete hour may remain unpriced.

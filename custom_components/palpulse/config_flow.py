@@ -77,9 +77,43 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     """Independent tariff and historical-cost settings that preserve each other."""
 
     async def async_step_init(self, user_input=None):
+        """Keep the day-to-day settings short; recovery stays available."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "connection_check", "replace_esp32", "dashboard"],
+            menu_options=[
+                "overview", "wizard", "electricity_settings",
+                "history_tools", "advanced",
+            ],
+        )
+
+    async def async_step_electricity_settings(self, user_input=None):
+        """All tariff controls in one place."""
+        menu = ["pricing"]
+        if self.config_entry.options.get(
+            CONF_PRICING_MODE, MODE_HOME_ASSISTANT
+        ) == MODE_TOU:
+            menu.append("free_hours")
+        return self.async_show_menu(
+            step_id="electricity_settings", menu_options=menu,
+        )
+
+    async def async_step_history_tools(self, user_input=None):
+        """Optional imports and diagnostics, never automatic on upgrade."""
+        return self.async_show_menu(
+            step_id="history_tools",
+            menu_options=[
+                "energy_history", "cost_history", "energy_integrity",
+            ],
+        )
+
+    async def async_step_advanced(self, user_input=None):
+        """Occasional troubleshooting and ESP32 recovery options."""
+        return self.async_show_menu(
+            step_id="advanced",
+            menu_options=[
+                "connection_check", "history_transport",
+                "replace_esp32", "dashboard",
+            ],
         )
 
     async def async_step_wizard(self, user_input=None):

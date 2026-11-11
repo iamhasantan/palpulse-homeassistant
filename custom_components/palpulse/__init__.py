@@ -88,6 +88,16 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     hass.data.setdefault(f"{DOMAIN}_cost_migration", {})[
         entry.entry_id
     ] = cost_migration
+
+    # Old versions displayed optional migration actions and completed-progress
+    # sensors on the device page. Keep them working, but move them out of view
+    # once, without changing user-named or already hidden entities.
+    try:
+        from .ui_cleanup import async_tidy_existing_entities
+        await async_tidy_existing_entities(hass, entry, meter)
+    except Exception:
+        _LOGGER.exception("PalPulse optional entity-list cleanup failed")
+
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.BUTTON, Platform.SENSOR]
     )
