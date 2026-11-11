@@ -13,7 +13,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_METER_MAC, DOMAIN
+from .const import CONF_METER_MAC, CONF_ACK_SERVICE, DOMAIN
 from .history import normalize_mac
 from .migration import CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID
 from .pricing import (
@@ -80,7 +80,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "dashboard"],
+            menu_options=["wizard", "overview", "energy_integrity", "pricing", "free_hours", "historical_costs", "cost_history", "energy_history", "energy_source", "history_transport", "dashboard"],
         )
 
     async def async_step_wizard(self, user_input=None):
@@ -610,6 +610,29 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     def _history_manager(self, kind: str):
         key = f"{DOMAIN}_{'migration' if kind == 'energy' else 'cost_migration'}"
         return self.hass.data.get(key, {}).get(self.config_entry.entry_id)
+
+    async def async_step_history_transport(self, user_input=None):
+        """Opt in to the ESPHome acknowledged native-API history action."""
+        current = str(self.config_entry.options.get(CONF_ACK_SERVICE, ""))
+        errors = {}
+        if user_input is not None:
+            service = str(user_input.get(CONF_ACK_SERVICE) or "").strip()
+            if service and not re.fullmatch(r"esphome\.[a-z][a-z0-9_]+", service):
+                errors["base"] = "invalid_ack_service"
+            else:
+                options = {**self.config_entry.options}
+                if service:
+                    options[CONF_ACK_SERVICE] = service
+                else:
+                    options.pop(CONF_ACK_SERVICE, None)
+                return self.async_create_entry(data=options)
+        return self.async_show_form(
+            step_id="history_transport",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_ACK_SERVICE, default=current): str,
+            }),
+            errors=errors,
+        )
 
     async def async_step_energy_source(self, user_input=None):
         """Choose an energy migration source without touching old statistics."""
