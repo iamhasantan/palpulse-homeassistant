@@ -89,12 +89,56 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
     async def async_step_electricity_settings(self, user_input=None):
         """All tariff controls in one place."""
         menu = ["pricing"]
-        if self.config_entry.options.get(
+        mode = self.config_entry.options.get(
             CONF_PRICING_MODE, MODE_HOME_ASSISTANT
-        ) == MODE_TOU:
+        )
+        if mode == MODE_TOU:
             menu.append("free_hours")
+        if mode != MODE_HOME_ASSISTANT:
+            menu.append("energy_dashboard_cost")
         return self.async_show_menu(
             step_id="electricity_settings", menu_options=menu,
+        )
+
+    async def async_step_energy_dashboard_cost(self, user_input=None):
+        """Diagnose missing costs; only change Energy prefs with confirmation."""
+        from .dashboard_cost import async_check_cost_link, async_link_verified_cost
+
+        mac = self.config_entry.data[CONF_METER_MAC]
+        energy_id = f"{DOMAIN}:powerpal_{mac}_energy"
+        cost_id = f"{DOMAIN}:powerpal_{mac}_cost"
+        writer = self.hass.data.get(f"{DOMAIN}_cost", {}).get(
+            self.config_entry.entry_id
+        )
+        try:
+            state = await async_check_cost_link(self.hass, energy_id, cost_id)
+        except Exception as err:
+            return self.async_abort(
+                reason="cost_link_unavailable",
+                description_placeholders={"error": str(err)[:300]},
+            )
+        errors = {}
+        if user_input is not None and user_input.get("confirm_link") is True:
+            state = await async_link_verified_cost(
+                self.hass, energy_id, cost_id, writer,
+            )
+            if state.status == "linked":
+                if writer is not None:
+                    await writer.async_refresh_cost_link()
+                return self.async_abort(reason="cost_linked")
+            errors["base"] = "cost_link_not_ready"
+        return self.async_show_form(
+            step_id="energy_dashboard_cost",
+            data_schema=vol.Schema({
+                vol.Optional("confirm_link", default=False): bool,
+            }),
+            errors=errors,
+            description_placeholders={
+                "status": state.status.replace("_", " ").title(),
+                "guidance": state.guidance,
+                "energy_statistic": energy_id,
+                "cost_statistic": cost_id,
+            },
         )
 
     async def async_step_history_tools(self, user_input=None):
