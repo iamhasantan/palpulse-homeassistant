@@ -159,6 +159,9 @@ class LiveHistoryStatusSensor(SensorEntity):
             "pending_minute_records": status["pending_minute_records"],
             "message": status["message"],
             "last_import_error": status["last_import_error"],
+            "ack_service": status["ack_service"],
+            "last_acknowledged_utc_minute": self._as_utc_iso(status["last_acknowledged_utc_minute"]),
+            "ack_error": status["ack_error"],
             "statistic_id": status["statistic_id"],
         }
 
