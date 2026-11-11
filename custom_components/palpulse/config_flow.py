@@ -117,20 +117,34 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                 reason="cost_link_unavailable",
                 description_placeholders={"error": str(err)[:300]},
             )
+        from .const import CONF_AUTO_LINK_ENERGY_COST
+
         errors = {}
         if user_input is not None and user_input.get("confirm_link") is True:
             state = await async_link_verified_cost(
                 self.hass, energy_id, cost_id, writer,
             )
             if state.status == "linked":
-                if writer is not None:
-                    await writer.async_refresh_cost_link()
-                return self.async_abort(reason="cost_linked")
+                # The link is repaired now. Persist opt-in separately so a
+                # user who unticks it will not have their choice overridden.
+                updated = {
+                    **self.config_entry.options,
+                    CONF_AUTO_LINK_ENERGY_COST: bool(
+                        user_input.get("keep_link_active", False)
+                    ),
+                }
+                return self.async_create_entry(data=updated)
             errors["base"] = "cost_link_not_ready"
         return self.async_show_form(
             step_id="energy_dashboard_cost",
             data_schema=vol.Schema({
                 vol.Optional("confirm_link", default=False): bool,
+                vol.Optional(
+                    "keep_link_active",
+                    default=self.config_entry.options.get(
+                        CONF_AUTO_LINK_ENERGY_COST, False
+                    ),
+                ): bool,
             }),
             errors=errors,
             description_placeholders={
