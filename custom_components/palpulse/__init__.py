@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         from .cost_recorder import PalPulseCostRecorder
         cost_recorder = PalPulseCostRecorder(hass, entry, meter)
         await cost_recorder.async_load()
+        cost_recorder.energy_importer = importer
         importer.cost_recorder = cost_recorder
         hass.data.setdefault(f"{DOMAIN}_cost", {})[entry.entry_id] = cost_recorder
 
