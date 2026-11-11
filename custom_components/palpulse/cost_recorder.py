@@ -289,6 +289,15 @@ class PalPulseCostRecorder:
     ) -> None:
         start = hour.hour_start
         if self._last_hour is not None and start <= self._last_hour:
+            # An old pending entry can survive a crash after a Store save.
+            # Remove it only if its corresponding Recorder hour still exists.
+            # Otherwise stop and retain the durable recovery job.
+            present = await self._read(start, start + 3600)
+            if len(present) != 1 or int(present[0]["start"]) != start:
+                raise ValueError(
+                    "Previously costed Recorder hour is missing; pending job "
+                    "retained for review rather than silently discarded"
+                )
             return
         # A previous Recorder write may have succeeded just before HA crashed
         # while its Store checkpoint failed. Never skip over those committed
