@@ -9,7 +9,7 @@ durable checkpointing, and duplicate replay is reconciled.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 import time
@@ -55,6 +55,9 @@ class PalPulseCostRecorder:
         self._transition_hours: set[int] = set()
         self._unpriced_hours: set[int] = set()
         self._lock = asyncio.Lock()
+        self._unsubscribe_retry = None
+        self._last_retry_utc: int | None = None
+        self._retry_count = 0
 
     @property
     def status(self) -> dict:
@@ -68,6 +71,8 @@ class PalPulseCostRecorder:
             "pending_cost_hours": len(self._pending),
             "tariff_transition_hours": sorted(self._transition_hours),
             "unpriced_hours": sorted(self._unpriced_hours),
+            "last_retry_utc": self._last_retry_utc,
+            "recovery_attempts": self._retry_count,
         }
 
     def _snapshot(self) -> dict:
@@ -81,6 +86,9 @@ class PalPulseCostRecorder:
             "tariff_profiles": self._tariff_profiles,
             "tariff_transition_hours": sorted(self._transition_hours),
             "last_error": self._error,
+            "unpriced_hours": sorted(self._unpriced_hours),
+            "last_retry_utc": self._last_retry_utc,
+            "recovery_attempts": self._retry_count,
         }
 
     async def async_load(self) -> None:
@@ -95,6 +103,8 @@ class PalPulseCostRecorder:
         self._tariff_profiles = list(data.get("tariff_profiles", []))
         self._transition_hours = set(int(ts) for ts in data.get("tariff_transition_hours", []))
         self._unpriced_hours = set(int(ts) for ts in data.get("unpriced_hours", []))
+        self._last_retry_utc = data.get("last_retry_utc")
+        self._retry_count = int(data.get("recovery_attempts", 0))
         current = dict(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -113,7 +123,36 @@ class PalPulseCostRecorder:
         if not math.isfinite(self._sum):
             raise ValueError("PalPulse cost ledger has an invalid cumulative sum")
 
+    async def async_start(self) -> None:
+        """Recover committed pending hours without waiting for a new meter event."""
+        from homeassistant.helpers.event import async_track_time_interval
+
+        if self._unsubscribe_retry is None:
+            self._unsubscribe_retry = async_track_time_interval(
+                self.hass, self._periodic_retry, timedelta(minutes=5),
+            )
+        await self.async_recover_pending()
+
+    async def _periodic_retry(self, _now) -> None:
+        """A failed Recorder write is retried even after an ESP32/HA outage."""
+        await self.async_recover_pending()
+
+    async def async_recover_pending(self) -> None:
+        """Idempotent, independently scheduled recovery from the durable journal."""
+        if not self._pending or not is_cost_enabled(self.entry.options):
+            return
+        async with self._lock:
+            if not self._pending:
+                return
+            self._last_retry_utc = int(time.time())
+            self._retry_count += 1
+            await self._store.async_save(self._snapshot())
+            await self._drain_pending()
+
     async def async_flush(self) -> None:
+        if self._unsubscribe_retry is not None:
+            self._unsubscribe_retry()
+            self._unsubscribe_retry = None
         async with self._lock:
             await self._store.async_save(self._snapshot())
 
