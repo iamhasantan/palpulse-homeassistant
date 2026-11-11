@@ -230,6 +230,48 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         # Missing minute pricing is not reconstructed from hourly totals.
         self.assertEqual(costed_hours, [BASE, BASE + 7200])
 
+    async def test_replacement_esp32_rebases_once_without_rewriting_old_sum(self):
+        await self.feed_hour(BASE, 40000)
+        original = dict(RECORDER_ROWS[BASE])
+        await self.importer.async_arm_device_replacement()
+        await self.feed_hour(BASE + 3600, 1000)
+        self.assertEqual(self.importer.health["device_rebase_count"], 1)
+        self.assertEqual(RECORDER_ROWS[BASE], original)
+        self.assertAlmostEqual(RECORDER_IMPORTS[-1][1][0]["sum"], 1200 / CAL)
+        self.assertIsNone(self.importer.health["device_rebase_deadline"])
+        # A second unexpected reset must not reuse the old approval.
+        await self.feed_hour(BASE + 7200, 100)
+        self.assertTrue(self.importer._halted)
+
+    async def test_acknowledges_only_durable_saved_minute(self):
+        acknowledgments = []
+
+        class Services:
+            def has_service(self, domain, service):
+                return domain == "esphome" and service == "meter_palpulse_ack_1234"
+
+            async def async_call(self, domain, service, data, blocking):
+                snapshot = FakeStore.VALUES.get(f"palpulse_{MAC}")
+                self.assertIsNotNone(snapshot)
+                self.assertGreaterEqual(snapshot["ack_timestamp"], data["timestamp"])
+                acknowledgments.append(data["timestamp"])
+
+        # Nested class must see this testcase's assertions.
+        testcase = self
+        Services.assertIsNotNone = lambda _, v: testcase.assertIsNotNone(v)
+        Services.assertGreaterEqual = lambda _, a, b: testcase.assertGreaterEqual(a, b)
+        self.hass.services = Services()
+        self.importer = palpulse.PalPulseImporter(
+            self.hass, MAC, "esphome.meter_palpulse_ack_1234"
+        )
+        await self.importer.async_load()
+        with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+            await self.importer.async_receive(record_event(BASE, 10, 40010))
+            await self.importer.async_receive(record_event(BASE + 60, 10, 40020))
+            await self.importer.async_receive(record_event(BASE + 60, 10, 40020))
+        self.assertEqual(acknowledgments, [BASE, BASE + 60, BASE + 60])
+        self.assertEqual(self.importer.health["last_acknowledged_utc_minute"], BASE + 60)
+
     async def test_second_hour_and_restart(self):
         await self.feed_hour(BASE, 40000)
         restored = palpulse.PalPulseImporter(self.hass, MAC)
