@@ -42,9 +42,9 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
         self.entry = types.SimpleNamespace(entry_id="example")
         self.ids = ui.auxiliary_unique_ids(self.mac)
 
-    def entity(self, name, unique_id, domain="sensor", **overrides):
+    def entity(self, entity_id, unique_id, domain="sensor", **overrides):
         fields = {
-            "entity_id": name,
+            "entity_id": entity_id,
             "unique_id": unique_id,
             "platform": "palpulse",
             "config_entry_id": "example",
