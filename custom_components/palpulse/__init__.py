@@ -71,6 +71,16 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     unsub = hass.bus.async_listen(EVENT_TYPE, _receive)
     entry.async_on_unload(unsub)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = importer
+
+    # An ESPHome checkpoint report is informational, keyed to this specific
+    # Powerpal MAC. It never moves a firmware cursor or rewrites Recorder.
+    if getattr(hass, "http", None) is not None:
+        try:
+            from .panel_api import register_checkpoint_listener
+            register_checkpoint_listener(hass, entry)
+        except Exception:
+            _LOGGER.exception("Unable to register PalPulse checkpoint telemetry")
+
     # Create one shared migration manager before either entity platform starts.
     # The progress sensors and buttons both observe the same live job.
     from .migration import LegacyMigration
@@ -109,6 +119,15 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             await cost_recorder.async_start()
         except Exception:
             _LOGGER.exception("PalPulse cost recovery could not start")
+
+    # Optional sidebar is isolated from metering. Failure must not interrupt
+    # existing installations or historical migration safety.
+    if getattr(hass, "http", None) is not None:
+        try:
+            from .panel import async_setup_panel
+            await async_setup_panel(hass)
+        except Exception:
+            _LOGGER.exception("PalPulse sidebar could not load; metering remains active")
     return True
 
 
@@ -137,6 +156,15 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     importer = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if importer:
         await importer.async_flush()
+
+    hass.data.get(f"{DOMAIN}_checkpoint", {}).pop(entry.entry_id, None)
+    hass.data.get(f"{DOMAIN}_replay_request", {}).pop(entry.entry_id, None)
+    if getattr(hass, "http", None) is not None:
+        try:
+            from .panel import async_remove_panel_if_unused
+            async_remove_panel_if_unused(hass)
+        except Exception:
+            _LOGGER.exception("PalPulse sidebar cleanup failed")
     return True
 
 
