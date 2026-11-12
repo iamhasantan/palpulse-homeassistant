@@ -37,6 +37,7 @@ from .history import (
     counter_verified_sparse_hour,
     counter_verified_from_previous,
     parse_event,
+    normalize_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,8 +87,19 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         importer.cost_recorder = cost_recorder
         hass.data.setdefault(f"{DOMAIN}_cost", {})[entry.entry_id] = cost_recorder
 
+    history_delivery = hass.data.setdefault(f"{DOMAIN}_history_delivery", {}).setdefault(
+        entry.entry_id, {"received_count": 0, "last_event_at": None}
+    )
+
     @callback
     def _receive(event: Event) -> None:
+        try:
+            if normalize_mac(str(event.data.get("meter", ""))) != meter:
+                return
+        except (ValueError, TypeError, AttributeError):
+            return
+        history_delivery["received_count"] += 1
+        history_delivery["last_event_at"] = int(time.time())
         hass.async_create_task(importer.async_receive(event.data))
 
     unsub = hass.bus.async_listen(EVENT_TYPE, _receive)
@@ -96,12 +108,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     # An ESPHome checkpoint report is informational, keyed to this specific
     # Powerpal MAC. It never moves a firmware cursor or rewrites Recorder.
-    if getattr(hass, "http", None) is not None:
-        try:
-            from .panel_api import register_checkpoint_listener
-            register_checkpoint_listener(hass, entry)
-        except Exception:
-            _LOGGER.exception("Unable to register PalPulse checkpoint telemetry")
+    try:
+        from .panel_api import register_checkpoint_listener
+        register_checkpoint_listener(hass, entry)
+    except Exception:
+        _LOGGER.exception("Unable to register PalPulse checkpoint telemetry")
 
     # Create one shared migration manager before either entity platform starts.
     # The progress sensors and buttons both observe the same live job.
@@ -186,6 +197,8 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
         await importer.async_flush()
 
     hass.data.get(f"{DOMAIN}_checkpoint", {}).pop(entry.entry_id, None)
+    hass.data.get(f"{DOMAIN}_checkpoint_delivery", {}).pop(entry.entry_id, None)
+    hass.data.get(f"{DOMAIN}_history_delivery", {}).pop(entry.entry_id, None)
     hass.data.get(f"{DOMAIN}_replay_request", {}).pop(entry.entry_id, None)
     if getattr(hass, "http", None) is not None:
         try:
