@@ -224,6 +224,66 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["pending_cost_hours"], 1)
         self.assertIn("does not match", status["last_error"])
 
+    async def test_free_window_cost_row_is_not_adopted_from_hourly_energy(self):
+        # The 05:00 AEDT hour is paid, but the next hour (06:00) is free.
+        # A correct cost depends on cumulative free usage, not just hourly kWh.
+        self.entry.options = {
+            "pricing_mode": "custom_time_of_use",
+            "peak_cents_per_kwh": 35,
+            "shoulder_cents_per_kwh": 25,
+            "offpeak_cents_per_kwh": 20,
+            "daily_supply_cents": 0,
+            "weekday_free": "06:00-07:00",
+            "weekend_free": "06:00-07:00",
+            "daily_free_cap_kwh": 15,
+            "free_excess_cents_per_kwh": 20,
+        }
+        base.FakeStore.VALUES.clear()
+        self.recorder = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await self.recorder.async_load()
+        first, samples = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        orphan = BASE + 3600
+        self.rows[orphan] = {
+            "start": orphan,
+            "state": self.rows[BASE]["sum"],
+            "sum": self.rows[BASE]["sum"],
+        }
+        self.energy_rows = {
+            BASE: {"start": BASE, "sum": 100, "state": 100},
+            orphan: {"start": orphan, "sum": 100.1875, "state": 100.1875},
+        }
+        later, later_samples = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_samples, base.CAL,
+        )
+        self.assertEqual(self.recorder.status["reconciled_cost_hours"], 0)
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
+        self.assertIn("free", self.recorder.status["last_error"])
+        self.assertNotIn(BASE + 7200, self.rows)
+
+    async def test_unknown_daily_supply_checkpoint_blocks_adoption(self):
+        first, samples = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        orphan = BASE + 3600
+        self.rows[orphan] = {
+            "start": orphan, "state": self.rows[BASE]["sum"] + 0.0375,
+            "sum": self.rows[BASE]["sum"] + 0.0375,
+        }
+        self.energy_rows = {
+            BASE: {"start": BASE, "sum": 100, "state": 100},
+            orphan: {"start": orphan, "sum": 100.1875, "state": 100.1875},
+        }
+        # Losing the daily supply marker must never lead to skipping a fee.
+        self.recorder._last_supply_date = None
+        later, later_samples = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_samples, base.CAL,
+        )
+        self.assertEqual(self.recorder.status["last_costed_hour"], BASE)
+        self.assertEqual(self.recorder.status["reconciled_cost_hours"], 0)
+        self.assertIn("supply checkpoint", self.recorder.status["last_error"])
+
     async def test_foreign_recorder_cost_hour_is_diagnosed_not_overwritten(self):
         first, records = build_hour(BASE, 40000)
         await self.recorder.async_import_verified_hour(first, records, base.CAL)
