@@ -77,6 +77,7 @@ class PalPulseCostRecorder:
         self._energy_cost_link = "unknown"
         self._energy_cost_guidance = "Checking Home Assistant Energy settings"
         self.energy_importer = None
+        self._recorder_conflict: dict | None = None
 
     @property
     def status(self) -> dict:
@@ -104,6 +105,7 @@ class PalPulseCostRecorder:
             "energy_dashboard_cost_link": self._energy_cost_link,
             "energy_dashboard_cost_guidance": self._energy_cost_guidance,
             "energy_to_cost_lag_hours": lag_hours,
+            "recorder_conflict": self._recorder_conflict,
         }
 
     def _snapshot(self) -> dict:
@@ -120,6 +122,7 @@ class PalPulseCostRecorder:
             "unpriced_hours": sorted(self._unpriced_hours),
             "last_retry_utc": self._last_retry_utc,
             "recovery_attempts": self._retry_count,
+            "recorder_conflict": self._recorder_conflict,
         }
 
     async def async_load(self) -> None:
@@ -136,6 +139,7 @@ class PalPulseCostRecorder:
         self._unpriced_hours = set(int(ts) for ts in data.get("unpriced_hours", []))
         self._last_retry_utc = data.get("last_retry_utc")
         self._retry_count = int(data.get("recovery_attempts", 0))
+        self._recorder_conflict = data.get("recorder_conflict")
         current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -332,9 +336,27 @@ class PalPulseCostRecorder:
         if self._last_hour is not None and start > self._last_hour + 3600:
             pending = await self._read(self._last_hour + 3600, start)
             if pending:
+                # There may be legitimate rows left by a prior version or
+                # migration, but without their original verified minute
+                # records we cannot reconstruct tariff/free-cap state.
+                # Expose exact boundaries for a backup-first review. Never
+                # automatically skip, rebase, overwrite or double-charge.
+                first = min(int(row["start"]) for row in pending)
+                last = max(int(row["start"]) for row in pending)
+                self._recorder_conflict = {
+                    "checkpoint_utc_hour": int(self._last_hour),
+                    "first_unjournalled_utc_hour": first,
+                    "last_unjournalled_utc_hour": last,
+                    "existing_hour_count": len(pending),
+                    "queued_utc_hour": int(start),
+                }
+                await self._store.async_save(self._snapshot())
                 raise ValueError(
-                    "Recorder has unjournalled cost hours after the last "
-                    "durable checkpoint. Review before advancing cumulative cost"
+                    f"Recorder has {len(pending)} existing cost hour(s) beyond "
+                    "the saved checkpoint. PalPulse cannot verify their "
+                    "origin or tariff state. No rows have been changed. "
+                    "Inspect cost import status and Recorder history before "
+                    "resuming"
                 )
         options = self.entry.options if options is None else options
         time_zone = time_zone or self.hass.config.time_zone
