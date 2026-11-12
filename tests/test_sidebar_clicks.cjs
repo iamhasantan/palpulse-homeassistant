@@ -109,7 +109,7 @@ const state = {
 const panel = new Panel();
 panel._data = state;
 panel._meter = "meter-one";
-panel._hass = {
+const fakeHass = {
   states: {},
   services: { backup: { create_automatic: {} } },
   async callService(domain, service, data) {
@@ -145,6 +145,9 @@ async function click(fields) {
 
 (async () => {
   panel.connectedCallback();
+  // Assign after mounting so the initial lifecycle has no background refresh
+  // racing the explicit button-path assertions.
+  panel._hass = fakeHass;
 
   // All six tabs share the same delegated click handler.
   const sections = [
