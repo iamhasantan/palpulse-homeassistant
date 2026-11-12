@@ -196,6 +196,18 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.manager._backup.assert_not_awaited()
         self.assertEqual(len(self.writer._pending), 1)
 
+    async def test_invalid_earlier_cost_baseline_is_read_only(self):
+        self.cost_rows[self.start - 3600] = {
+            "start": self.start - 3600,
+            "sum": float("nan"), "state": float("nan"), "change": 0.0,
+        }
+        plan = await self.preview()
+        self.assertFalse(plan["baseline_verified"])
+        with self.assertRaisesRegex(ValueError, "monetary baseline"):
+            await self.apply(plan["digest"])
+        self.manager._backup.assert_not_awaited()
+        self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
+
     async def test_changed_plan_refused_without_backup_or_writer_changes(self):
         plan = await self.preview()
         self.energy_rows[self.start]["sum"] += 0.75
