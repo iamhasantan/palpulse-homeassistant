@@ -132,6 +132,53 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
         self.assertIn("missing", self.recorder.status["last_error"].lower())
 
+    async def test_legacy_zero_excess_rate_does_not_block_paid_orphan_recovery(self):
+        """Saved invalid free-cap rates must not strand an unrelated paid hour."""
+        self.entry.options = {
+            "pricing_mode": "custom_time_of_use",
+            "peak_cents_per_kwh": 34.936,
+            "shoulder_cents_per_kwh": 0,
+            "offpeak_cents_per_kwh": 20.24,
+            "daily_supply_cents": 0,
+            "weekday_free": "11:00-16:00",
+            "weekend_free": "11:00-16:00",
+            "weekday_peak": "",
+            "weekday_shoulder": "",
+            "weekend_peak": "",
+            "weekend_shoulder": "",
+            "daily_free_cap_kwh": 15,
+            "free_excess_cents_per_kwh": 0,
+        }
+        # This first paid hour is 05:00 AEDT. The orphan is 06:00 AEDT.
+        base.FakeStore.VALUES.clear()
+        self.recorder = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await self.recorder.async_load()
+        first, samples = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        self.assertIn(BASE, self.rows)
+        initial = self.rows[BASE]["sum"]
+
+        orphan = BASE + 3600
+        usage = 0.633125
+        expected = round(initial + usage * 0.2024, 9)
+        self.energy_rows = {
+            BASE: {"start": BASE, "sum": 100.0, "state": 100.0},
+            orphan: {"start": orphan, "sum": 100.0 + usage,
+                     "state": 100.0 + usage},
+        }
+        self.rows[orphan] = {
+            "start": orphan, "sum": expected, "state": expected,
+        }
+        later, later_samples = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_samples, base.CAL,
+        )
+        self.assertEqual(self.recorder.status["reconciled_cost_hours"], 1)
+        self.assertIsNone(self.recorder.status["last_error"])
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
+        self.assertEqual(self.rows[orphan]["sum"], expected)
+        self.assertIn(BASE + 7200, self.rows)
+
     async def test_matching_recorded_paid_cost_hour_self_heals_checkpoint(self):
         """The user's orphaned 9 am cost row must be adopted without rewriting."""
         # Same accounting as the real 11 Nov 9 am case: 0.633125 kWh at
