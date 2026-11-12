@@ -103,6 +103,62 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(start + 5 * 3600, self.rows)
         self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
 
+    async def test_zero_excess_and_missing_peak_windows_repair_pending_power5(self):
+        zone = ZoneInfo("Australia/Melbourne")
+        start = int(datetime(2026, 11, 12, 15, tzinfo=zone).timestamp())
+        old = {
+            "pricing_mode": "custom_time_of_use",
+            "peak_cents_per_kwh": 34.936,
+            "shoulder_cents_per_kwh": 0.0,
+            "offpeak_cents_per_kwh": 20.24,
+            "daily_supply_cents": 118.217,
+            "weekday_free": "11:00-16:00",
+            "weekend_free": "11:00-16:00",
+            "daily_free_cap_kwh": 15,
+            "free_excess_cents_per_kwh": 0,
+        }
+        self.entry.options = old
+        self.recorder._tariff_profiles = [
+            {"from": 0, "options": old, "timezone": "Australia/Melbourne"}
+        ]
+        self.recorder._last_hour = start - 3600
+        self.recorder._last_supply_date = "2026-11-12"
+        self.recorder._free_used = {"2026-11-12": 15}
+        hour, samples = build_hour(start, 40000)
+        with patch.object(
+            self.recorder, "_write_hour",
+            AsyncMock(side_effect=RuntimeError("simulate old blocked writer")),
+        ):
+            await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
+
+        self.entry.options = {
+            **old,
+            "free_excess_cents_per_kwh": 16.412,
+            "weekday_peak": "16:00-21:00",
+            "weekend_peak": "16:00-21:00",
+            "weekday_shoulder": "",
+            "weekend_shoulder": "",
+        }
+        await self.recorder.async_recover_pending()
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
+        self.assertEqual(self.recorder.status["repaired_pending_tariffs"], 1)
+        self.assertAlmostEqual(
+            self.rows[start]["sum"], 600 / base.CAL * 0.16412,
+        )
+
+    async def test_sparse_hour_prices_exact_uniform_paid_usage(self):
+        hour, samples = build_hour(BASE, 40000)
+        for minute in range(1, 59):
+            del samples[BASE + minute * 60]
+        recovered = history.counter_verified_sparse_hour(samples, BASE)
+        self.assertEqual(recovered.missing_minutes, 58)
+        await self.recorder.async_import_verified_hour(
+            recovered, samples, base.CAL,
+        )
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
+        self.assertAlmostEqual(self.rows[BASE]["sum"], .0375)
+
     async def test_pending_cost_recovers_at_startup_without_new_meter_data(self):
         hour, samples = build_hour(BASE, 40000)
         with patch.object(
