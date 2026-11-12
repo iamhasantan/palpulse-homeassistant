@@ -84,6 +84,20 @@ def _cost_band(utc_start: int, profile: Mapping) -> tuple[str, float | None, str
     return band[0], band[1], bill_date
 
 
+def energy_fingerprint(rows: list[dict], start_utc: int, end_utc: int) -> str:
+    """Immutable hash of raw Recorder energy across the correction interval."""
+    values = sorted(
+        (
+            int(row["start"]), row.get("state"),
+            row.get("sum"), row.get("change"),
+        )
+        for row in rows if start_utc - HOUR <= int(row["start"]) < end_utc
+    )
+    return hashlib.sha256(
+        json.dumps(values, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
 def build_cost_plan(
     energy_rows: list[dict], cost_rows: list[dict], versions: list[dict],
     start_utc: int, end_utc: int, *, zone_name: str,
@@ -250,6 +264,7 @@ def build_cost_plan(
         })
     result = {
         "start_utc": start_utc, "end_utc": end_utc, "timezone": zone_name,
+        "energy_digest": energy_fingerprint(energy_rows, start_utc, end_utc),
         "anchor_utc": anchor[0] if anchor else None,
         "anchor_sum": float(baseline), "rows": row_plans,
         "day_totals": [summaries[key] for key in sorted(summaries)],
