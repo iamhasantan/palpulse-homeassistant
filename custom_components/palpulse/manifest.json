@@ -16,7 +16,8 @@
     "backup",
     "recorder",
     "frontend",
-    "websocket_api"
+    "websocket_api",
+    "http"
   ],
   "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
   "integration_type": "service",
