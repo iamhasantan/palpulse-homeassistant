@@ -304,7 +304,7 @@ class PalPulseCostRecorder:
                 ):
                     raise ValueError("Unjournalled hour includes free or mixed billing dates")
                 price = price_for_datetime(options, local)
-                if price is None or not math.isfinite(price) or price < 0:
+                if price is None or not math.isfinite(price) or price <= 0:
                     raise ValueError("Unjournalled hour has no verifiable paid rate")
                 if rate is not None and abs(rate - price) > 1e-12:
                     raise ValueError("Unjournalled hour crosses electricity price bands")
