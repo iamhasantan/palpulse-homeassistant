@@ -161,7 +161,7 @@ async function click(fields) {
   // All seven tabs share the same delegated click handler.
   const sections = [
     ["overview", "Recent energy"],
-    ["electricity", "Tariff"],
+    ["electricity", "Electricity tariff settings"],
     ["history", "Recorded hourly history"],
     ["checkpoint", "ESP32 checkpoint"],
     ["settings", "Connections and dashboard"],
