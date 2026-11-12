@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import math
 import time
+from types import SimpleNamespace
 
 from .history import CompletedHour, Record
 from zoneinfo import ZoneInfo
@@ -85,6 +86,7 @@ class PalPulseCostRecorder:
         self._reconciled_cost_hours = 0
         self._last_reconciled_utc_hour: int | None = None
         self._repaired_pending_tariffs = 0
+        self._energy_backfill_hours = 0
 
     @property
     def status(self) -> dict:
@@ -116,6 +118,7 @@ class PalPulseCostRecorder:
             "reconciled_cost_hours": self._reconciled_cost_hours,
             "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
             "repaired_pending_tariffs": self._repaired_pending_tariffs,
+            "recovered_cost_from_energy_hours": self._energy_backfill_hours,
         }
 
     def _snapshot(self) -> dict:
@@ -136,6 +139,7 @@ class PalPulseCostRecorder:
             "reconciled_cost_hours": self._reconciled_cost_hours,
             "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
             "repaired_pending_tariffs": self._repaired_pending_tariffs,
+            "recovered_cost_from_energy_hours": self._energy_backfill_hours,
         }
 
     async def async_load(self) -> None:
@@ -156,6 +160,7 @@ class PalPulseCostRecorder:
         self._reconciled_cost_hours = int(data.get("reconciled_cost_hours", 0))
         self._last_reconciled_utc_hour = data.get("last_reconciled_utc_hour")
         self._repaired_pending_tariffs = int(data.get("repaired_pending_tariffs", 0))
+        self._energy_backfill_hours = int(data.get("recovered_cost_from_energy_hours", 0))
         current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -217,16 +222,131 @@ class PalPulseCostRecorder:
         await self.async_refresh_cost_link()
 
     async def async_recover_pending(self) -> None:
-        """Idempotent, independently scheduled recovery from the durable journal."""
-        if not self._pending or not is_cost_enabled(self.entry.options):
+        """Retry the journal, then safely reconstruct absent fixed-band costs."""
+        if not is_cost_enabled(self.entry.options):
             return
         async with self._lock:
-            if not self._pending:
-                return
             self._last_retry_utc = int(time.time())
             self._retry_count += 1
+            if self._pending:
+                await self._store.async_save(self._snapshot())
+                await self._drain_pending()
+            # Never bypass a still-blocked durable minute-level cost job.
+            if not self._pending:
+                await self._recover_from_energy_statistics()
             await self._store.async_save(self._snapshot())
-            await self._drain_pending()
+
+    async def _recover_from_energy_statistics(self) -> None:
+        """Use exact adjacent Recorder energy deltas when minute jobs are gone.
+
+        Only confirmed state+sum deltas from consecutive hourly energy rows
+        can be costed. A mixed tariff, missing energy, uncertain capped-free
+        allocation, or existing different Recorder cost is not rewritten.
+        This cannot repair older unpriced rows after a newer cost checkpoint.
+        """
+        if self._last_hour is None or self.energy_importer is None:
+            return
+        cal = getattr(self.energy_importer, "_calibration", None)
+        latest = self.energy_importer.health.get("last_completed_utc_hour")
+        if cal is None or not (0 < float(cal) <= 1000000) or latest is None:
+            return
+        if latest <= self._last_hour:
+            return
+        energy_id = f"{DOMAIN}:powerpal_{self.mac}_energy"
+        # Bound each retry; subsequent five-minute retries continue from
+        # whatever verified cost hour was last committed.
+        begin = max(self._last_hour, latest - 168 * 3600)
+        finish = latest + 3600
+        recorded = await self._read(begin, finish, statistic_id=energy_id)
+        by_hour = {int(row["start"]): row for row in recorded}
+        for stamp in sorted(by_hour):
+            if stamp <= self._last_hour or stamp in self._unpriced_hours:
+                continue
+            previous = by_hour.get(stamp - 3600)
+            current = by_hour[stamp]
+            if previous is None:
+                continue
+            try:
+                prev_state = float(previous["state"])
+                curr_state = float(current["state"])
+                delta_sum = float(current["sum"]) - float(previous["sum"])
+                delta_state = curr_state - prev_state
+                start_pulses = round(prev_state * cal)
+                end_pulses = round(curr_state * cal)
+                delta_pulses = end_pulses - start_pulses
+                if (
+                    delta_pulses < 0
+                    or not all(math.isfinite(v) for v in (
+                        prev_state, curr_state, delta_sum, delta_state,
+                    ))
+                    or not math.isclose(
+                        delta_sum, delta_state, rel_tol=0, abs_tol=1e-5,
+                    )
+                    or not math.isclose(
+                        delta_state, delta_pulses / cal, rel_tol=0,
+                        abs_tol=1e-5,
+                    )
+                ):
+                    continue
+
+                if stamp in self._transition_hours:
+                    continue
+                profile = max(
+                    (p for p in self._tariff_profiles
+                     if int(p["from"]) <= stamp),
+                    key=lambda p: int(p["from"]),
+                    default=None,
+                )
+                if profile is None or any(
+                    stamp < int(p["from"]) < stamp + 3600
+                    for p in self._tariff_profiles
+                ):
+                    continue
+                job = {
+                    "start": stamp, "options": dict(profile["options"]),
+                    "timezone": str(profile["timezone"]),
+                }
+                await self._repair_pending_tariff(job)
+                options = job["options"]
+                # A configured peak without peak periods is not a complete
+                # TOU schedule. Do not reconstruct wrong off-peak costs.
+                if (
+                    options.get(CONF_PRICING_MODE) == "custom_time_of_use"
+                    and float(options.get(CONF_PEAK_CENTS, 0)) > 0
+                    and (
+                        not options.get("weekday_peak")
+                        or not options.get("weekend_peak")
+                    )
+                ):
+                    self._error = "Peak rate has no peak window; complete the tariff to recover costs"
+                    return
+
+                hour = SimpleNamespace(
+                    hour_start=stamp, missing_minutes=59,
+                    consumption_pulses=delta_pulses,
+                )
+                await self._write_hour(
+                    hour, {}, cal,
+                    options=options, time_zone=job["timezone"],
+                )
+                self._energy_backfill_hours += 1
+                await self._store.async_save(self._snapshot())
+                _LOGGER.info(
+                    "PalPulse reconstructed cost for UTC hour %s from "
+                    "matching committed Recorder energy counters", stamp,
+                )
+            except UnpriceableHour as err:
+                self._unpriced_hours.add(stamp)
+                self._error = str(err)
+                await self._store.async_save(self._snapshot())
+                continue
+            except Exception as err:
+                self._error = f"{type(err).__name__}: {err}"
+                _LOGGER.warning(
+                    "PalPulse Recorder energy cost backfill paused at %s: %s",
+                    stamp, self._error,
+                )
+                return
 
     async def async_flush(self) -> None:
         if self._unsubscribe_retry is not None:
