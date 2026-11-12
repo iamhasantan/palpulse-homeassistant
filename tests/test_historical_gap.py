@@ -1,7 +1,10 @@
 """Regression checks for historical energy gap preview, no HA runtime needed."""
+import pathlib
+import sys
 import unittest
 
-from custom_components.palpulse.historical_gap import plan_recoverable_gaps
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components" / "palpulse"))
+from historical_gap import plan_recoverable_gaps  # noqa: E402
 
 
 def row(hour, state, total):
