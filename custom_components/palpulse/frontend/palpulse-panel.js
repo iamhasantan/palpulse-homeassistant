@@ -101,7 +101,7 @@ ${this._field(m,"weekend_shoulder","Weekend shoulder hours")}
 </div>${this._settingsActions()}</section>
 <section class="card"><h2>Cost recording health</h2>
 ${c.last_error?this.n(c.last_error,true):this.n("No active cost error reported.")}
-${this.rows([["Cost link",c.energy_dashboard_cost_link||"Unknown"],["Last costed",fmt(c.last_costed_hour)],["Pending cost hours",c.pending_cost_hours??0],["Cost lag (hours)",c.energy_to_cost_lag_hours??"Unknown"],["Reconciled hours",c.reconciled_cost_hours??0],["Repaired queued tariff jobs",c.repaired_pending_tariffs??0],["Unpriced hours",(c.unpriced_hours||[]).length],["Last retry",fmt(c.last_retry_utc)]])}
+${this.rows([["Cost link",c.energy_dashboard_cost_link||"Unknown"],["Last costed",fmt(c.last_costed_hour)],["Pending cost hours",c.pending_cost_hours??0],["Cost lag (hours)",c.energy_to_cost_lag_hours??"Unknown"],["Reconciled hours",c.reconciled_cost_hours??0],["Repaired old tariff snapshots",c.repaired_pending_tariffs??0],["Recovered cost hours from energy",c.recovered_cost_from_energy_hours??0],["Unpriced hours",(c.unpriced_hours||[]).length],["Last retry",fmt(c.last_retry_utc)]])}
 ${c.recorder_conflict?this.rows(Object.entries(c.recorder_conflict).map(([k,v])=>[k,k.includes("hour")?fmt(v):v])):""}
 <button data-linkcost>Link verified cost to Energy dashboard</button><p class="hint">Only links a matching source with no existing price or cost selection, and only after confirming an actual Recorder cost hour.</p><button data-tab="settings">Other settings and sources</button>
 </section></div>`;}
