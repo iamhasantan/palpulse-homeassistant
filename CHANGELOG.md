@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.2b7
+
+### What's Changed
+
+- **Edit tariffs without leaving PalPulse.** The sidebar Electricity screen now lets administrators edit flat and time-of-use rates, daily supply, free daily allowances, excess rates and all weekday/weekend free, peak and shoulder windows. The Settings screen includes ESPHome history transport, verified Energy cost-link preferences and original migration sources.
+- **Safe saves.** All changes use server-side tariff validation, per-meter permission checks, edit conflict protection and migration-source locks. The integration reloads to record the new tariff boundary without overwriting past Recorder statistics.
+- **Connect verified costs.** A confirmed button links an actual PalPulse cost statistic to an unpriced matching Home Assistant Energy grid source. Another provider's existing tariff or cost choice is never overwritten.
+- **Resume provably free within-cap hours.** Historical queued hours with complete genuine minute measurements can be priced as zero while still inside an independently known allowance, even if a legacy excess rate was zero. Over-cap or uncertain hours remain blocked. Unrelated paid hours can continue.
+- **Recorder executor fix.** The panel queries statistics using Home Assistant's Recorder executor. Dashboard save and button actions have automated regression coverage.
+
+### Experimental preview
+
+**Back up Home Assistant including Recorder/history before updating.** Confirm any positive excess rate against your retailer's actual plan; PalPulse does not guess it. A missing free-hour interval may make later daily allowance usage unknowable, so the cost writer refuses to invent charges. Do not retry an old history import just to fill a gap. The separate historical Import, Resume and Undo operations still use their original backup-first protected Home Assistant flow. Actual Home Assistant 2026.11 browser and Powerpal/ESP32 testing is still required.
+
+
 ## 0.2b6
 
 ### What's Changed
