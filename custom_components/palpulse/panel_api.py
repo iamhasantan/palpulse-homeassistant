@@ -17,6 +17,7 @@ import probatio
 from homeassistant.components import websocket_api
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import callback
+from homeassistant.helpers.recorder import get_instance
 
 from .const import DOMAIN, CONF_ACK_SERVICE
 from .checkpoint import parse_checkpoint_event, replay_eligible, derive_replay_service
@@ -90,7 +91,7 @@ async def _recent_statistics(hass, statistic_ids: tuple[str, str]) -> dict:
             {"sum", "state", "change"},
         )
 
-    series = await hass.async_add_executor_job(load)
+    series = await get_instance(hass).async_add_executor_job(load)
     result = {}
     for statistic_id in statistic_ids:
         rows = series.get(statistic_id, [])
