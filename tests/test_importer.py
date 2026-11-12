@@ -256,6 +256,15 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         # independently refuses only mixed/ambiguous tariff intervals.
         self.assertEqual(costed_hours, [BASE, BASE + 3600, BASE + 7200])
 
+    async def test_missing_first_minute_recovers_with_prior_hour_end(self):
+        await self.feed_hour(BASE, 40000)
+        await self.feed_hour(BASE + 3600, 40600, skip=0)
+        await self.feed_hour(BASE + 7200, 41200)
+        self.assertEqual(len(RECORDER_IMPORTS), 3)
+        self.assertEqual(self.importer.health["skipped_hours"], 0)
+        self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
+        self.assertAlmostEqual(RECORDER_ROWS[BASE + 7200]["sum"], 1800 / CAL)
+
     async def test_replacement_esp32_rebases_once_without_rewriting_old_sum(self):
         await self.feed_hour(BASE, 40000)
         original = dict(RECORDER_ROWS[BASE])
