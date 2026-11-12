@@ -6,6 +6,7 @@ Assistant Recorder statistics. Never infer or write missing hourly energy here.
 
 from __future__ import annotations
 
+import re
 import time
 
 from .history import normalize_mac
@@ -86,3 +87,13 @@ def replay_eligible(report: dict | None, now: int) -> tuple[bool, str]:
     ):
         return False, "Powerpal buffer has rolled past the acknowledged cursor."
     return True, "Ready to ask ESPHome to re-read buffered measurements."
+
+
+def derive_replay_service(ack_service: str) -> str | None:
+    """Allow only a sibling ESPHome per-meter action, never an arbitrary call."""
+    if not re.fullmatch(
+        r"esphome\.[a-z][a-z0-9_]*_palpulse_ack_[0-9a-f]{8}",
+        ack_service,
+    ):
+        return None
+    return ack_service.replace("_palpulse_ack_", "_palpulse_replay_")
