@@ -58,6 +58,37 @@ only works while the original minute records remain in the Powerpal's buffer.
 It cannot fill hours that are no longer available or derive missing
 time-of-use charges.
 
+## Automatic best-effort recovery (next experimental preview)
+
+PalPulse retries saved energy hours after a restart and every five minutes, even
+if no new ESPHome events arrive. When original native-minute events are missing
+but the first and last cumulative meter readings survive, it can recover the
+**exact hourly kWh** with up to 58 missing interior minutes. A verified hour
+with one constant billing band can also recover the exact tariff cost.
+
+Missing cost entries can also be rebuilt from two adjacent Home Assistant
+Recorder energy hours when their raw meter-state difference agrees with the
+cumulative energy difference. This uses the original timestamp and tariff
+profile, not today's meter usage. Uncommitted legacy jobs with an accidentally
+unset Power5 excess rate can adopt the now-confirmed rate only if the remaining
+plan settings match, including the corrected 4-9pm peak windows. Already
+committed historical cost statistics are never silently rewritten.
+
+With a compatible ESPHome build and a configured native ACK action, a fresh,
+safe firmware checkpoint can automatically request buffered meter-history
+replay. The normal native ACK sequence protects durable Home Assistant storage
+from lost acknowledgments. This **cannot** restore minutes discarded from the
+Powerpal's own buffer, backfill skipped hours whose historical Recorder series
+has since advanced, or prove per-minute allocation when a sparse hour crosses
+tariff bands. Those hours remain explicitly missing/unpriced, rather than zero.
+
+**Red Power5:** Verify your actual invoice/fact sheet. Configure 11:00-16:00
+free (first 15 kWh), the retailer-confirmed excess rate, 16:00-21:00
+evening peak on weekdays and weekends, and off-peak otherwise. Having a
+numeric peak rate without peak windows does *not* activate peak pricing.
+The guided Power5 wizard sets these published windows but does not guess
+your rates.
+
 ## A simpler settings screen
 
 Open **Settings → Devices & services → PalPulse for Home Assistant → Configure**.
