@@ -431,16 +431,39 @@ class PalPulseCostRecorder:
             or float(old.get(CONF_FREE_CAP_KWH, 0)) <= 0
             or float(old.get(CONF_FREE_EXCESS_CENTS, 0)) > 0
             or float(current.get(CONF_FREE_EXCESS_CENTS, 0)) <= 0
-            or any(
-                old.get(key) != current.get(key)
-                for key in _TARIFF_FIELDS if key != CONF_FREE_EXCESS_CENTS
-            )
             or item["timezone"] != self.hass.config.time_zone
         ):
             return
-        from .pricing import validate_pricing
+
+        repairable = {CONF_FREE_EXCESS_CENTS}
+        # A known Power5 setup omission left a peak rate populated without
+        # its 4-9pm window. Only accept the explicit corrected Power5
+        # schedule, never a generic tariff change.
+        if (
+            old.get("weekday_free") == "11:00-16:00"
+            and old.get("weekend_free") == "11:00-16:00"
+            and float(old.get(CONF_FREE_CAP_KWH, 0)) == 15
+            and not old.get("weekday_peak")
+            and not old.get("weekend_peak")
+            and not old.get("weekday_shoulder")
+            and not old.get("weekend_shoulder")
+            and current.get("weekday_peak") == "16:00-21:00"
+            and current.get("weekend_peak") == "16:00-21:00"
+            and not current.get("weekday_shoulder")
+            and not current.get("weekend_shoulder")
+        ):
+            repairable.update(("weekday_peak", "weekend_peak"))
+
+        if any(
+            (old.get(key) or "") != (current.get(key) or "")
+            for key in _TARIFF_FIELDS if key not in repairable
+        ):
+            return
         repaired = dict(old)
-        repaired[CONF_FREE_EXCESS_CENTS] = current[CONF_FREE_EXCESS_CENTS]
+        for key in repairable:
+            if key in current:
+                repaired[key] = current[key]
+        from .pricing import validate_pricing
         validate_pricing(repaired)
         item["options"] = repaired
         self._repaired_pending_tariffs += 1
