@@ -146,11 +146,19 @@ class CostTests(unittest.TestCase):
         )
         self.assertEqual((fee, charged), (0.0, "2026-11-11"))
 
-        # A sample inside the capped-free period is still strictly rejected.
+        # A complete hour wholly inside the remaining allowance needs no
+        # excess rate. Once the cap is exceeded, the rate remains mandatory.
+        amount, _, used = price_verified_hour(
+            hour_at(datetime(2026, 11, 11, 12, tzinfo=tz)),
+            3600, o, "Australia/Melbourne",
+        )
+        self.assertEqual(amount, 0)
+        self.assertGreater(used["2026-11-11"], 0)
         with self.assertRaisesRegex(ValueError, "positive excess rate"):
             price_verified_hour(
                 hour_at(datetime(2026, 11, 11, 12, tzinfo=tz)),
                 3600, o, "Australia/Melbourne",
+                {"2026-11-11": 15},
             )
         with self.assertRaisesRegex(ValueError, "free window"):
             pricing.price_for_datetime(
