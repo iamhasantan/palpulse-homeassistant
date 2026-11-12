@@ -6,7 +6,7 @@
 
 ### What's Changed
 
-- **Best-effort exact energy.** Recover verified hourly usage when up to 58 interior minute records are missing but native first/last counter endpoints agree. Retain the original timestamp, detect counter conflicts and refuse fabricated allocations.
+- **Best-effort exact energy.** Recover verified hourly usage when up to 58 interior minutes are missing but first/last counter endpoints agree, or up to 59 when the preceding hour's durable final counter provides the first boundary. Retain the original timestamp, detect counter conflicts and refuse fabricated allocations.
 - **Recover more actual costs.** Price sparse counter-verified hours that fall entirely in one tariff band, including a tracked capped-free interval. Recover other missing fixed-band cost hours from adjacent Home Assistant Recorder energy states only when physical and cumulative deltas agree. Never overwrite existing different Recorder cost statistics.
 - **Repair legacy blocked tariff jobs.** Once the owner enters the real positive excess rate and corrects the known Red Power5 evening-peak omission, upgrade only uncommitted matching cost jobs and account for confirmed historic energy. Preserve the earlier tariff provenance for unrelated profiles.
 - **Self-healing replay and retry.** On startup and every five minutes, retry persisted energy and cost work independently of new ESP32 events. With ESPHome 0.2b3 acknowledged firmware and the verified ACK service, request safe buffered replay when a saved checkpoint is behind. Avoid the ACK deadlock caused by genuine native-minute gaps.
