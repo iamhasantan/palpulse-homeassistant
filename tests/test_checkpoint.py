@@ -65,6 +65,23 @@ class ESPCheckpointTests(unittest.TestCase):
                 self.assertIsNotNone(r)
                 self.assertFalse(cp.replay_eligible(r, NOW)[0])
 
+    def test_only_matching_esp_home_replay_action_is_permitted(self):
+        valid = "esphome.powerpal_proxy_palpulse_ack_1a2b3c4d"
+        self.assertEqual(
+            cp.derive_replay_service(valid),
+            "esphome.powerpal_proxy_palpulse_replay_1a2b3c4d",
+        )
+        for invalid in (
+            "script.reset_meter",
+            "esphome.reset_all",
+            "esphome.powerpal_proxy_palpulse_ack_1a2b3c4d;reboot",
+            "esphome.powerpal_proxy_palpulse_ack_1A2B3C4D",
+            "esphome.other_palpulse_replay_1a2b3c4d",
+            "",
+        ):
+            with self.subTest(value=invalid):
+                self.assertIsNone(cp.derive_replay_service(invalid))
+
     def test_missing_powerpal_buffer_is_not_recovered(self):
         older = cp.parse_checkpoint_event(
             event(buffer_oldest=str(NOW - 240)), MAC, now=NOW,
