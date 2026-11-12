@@ -208,7 +208,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_abort(reason="wizard_unavailable")
 
     async def async_step_wizard_red_power5(self, user_input=None):
-        """Preset only known Power5 window/cap; never guess paid rates."""
+        """Preset published Power5 windows; require actual paid rates."""
         prior = self.config_entry.options
         rate_keys = (
             CONF_PEAK_CENTS,
@@ -230,6 +230,14 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                     f"{str(user_input['free_start'])[:5]}-"
                     f"{str(user_input['free_end'])[:5]}"
                 ),
+                # The published Red Energy Victorian TOU bands put evening
+                # peak at 4-9pm daily. A saved peak rate without this window
+                # silently becomes off-peak, so the explicit Power5 preset
+                # must set the full schedule, not only the free hours.
+                "weekday_peak": "16:00-21:00",
+                "weekend_peak": "16:00-21:00",
+                "weekday_shoulder": "",
+                "weekend_shoulder": "",
                 CONF_FREE_CAP_KWH: user_input[CONF_FREE_CAP_KWH],
                 **{key: user_input[key] for key in rate_keys},
             }
