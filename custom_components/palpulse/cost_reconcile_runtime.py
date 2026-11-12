@@ -21,7 +21,7 @@ from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .cost_reconcile_plan import billing_range, build_cost_plan, HOUR
+from .cost_reconcile_plan import billing_range, build_cost_plan, energy_fingerprint, HOUR
 from .tariff_history import (
     CONF_TARIFF_VERSIONS, captured_tariff, validate_versions,
 )
@@ -203,6 +203,14 @@ async def apply_cost_reconciliation(
                     hass, (energy_id, cost_id),
                     int(plan["start_utc"]) - HOUR, int(plan["end_utc"]),
                 )
+                if energy_fingerprint(
+                    rows_before.get(energy_id, []),
+                    int(plan["start_utc"]), int(plan["end_utc"]),
+                ) != plan.get("energy_digest"):
+                    raise ValueError(
+                        "Meter energy changed since this cost plan was prepared. "
+                        "Do not resume a stale correction; review the saved journal"
+                    )
                 current_costs = {
                     int(row["start"]): row for row in rows_before.get(cost_id, [])
                 }
