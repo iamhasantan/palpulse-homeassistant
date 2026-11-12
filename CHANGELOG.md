@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2b5
+
+### What's Changed
+
+- **PalPulse in your Home Assistant sidebar.** A dedicated control centre brings energy recording, electricity prices, cost problems, history and backups together, without needing a manual dashboard import.
+- **See the gaps.** View recent hourly Recorder readings, identify missing electricity or cost records, and export an audit CSV. Missing values aren't shown as free or zero-priced usage.
+- **ESP32 checkpoint recovery.** With the companion ESPHome 0.2b2 firmware and acknowledged-history setup, inspect saved meter and ACK checkpoints and request a guarded replay of readings still buffered by Powerpal. A replay request does not reset checkpoints or rewrite old statistics.
+- **Safer updates and migration.** Request a Home Assistant backup from the panel, then verify it completed before using the existing Preview, Import or Undo tools.
+
+### Experimental preview
+
+Back up Home Assistant **including Recorder/history** before installing this build. Preserve your ESP32 firmware configuration and NVS data before upgrading the companion firmware. The new sidebar is for testing and is available to Home Assistant administrators. Real-meter and browser validation are still required. Buffered-history recovery cannot recreate readings that the meter has already discarded or guess time-of-use costs for incomplete minutes. Existing historical migrations and statistic identifiers remain unchanged.
+
 ## 0.2b4
 
 ### What's Changed
