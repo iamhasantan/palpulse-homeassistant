@@ -29,6 +29,16 @@ _LOGGER = logging.getLogger(__name__)
 MAX_RECONCILE_ROWS = 350
 
 
+def _queued_hours_covered(pending: list[dict], plan: dict) -> bool:
+    """Only retire pending cost jobs that have independently proven charges."""
+    indexed = {int(row["start"]): row for row in plan.get("rows", [])}
+    return all(
+        int(item["start"]) in indexed
+        and indexed[int(item["start"])]["source"] in ("verified", "recorded_sum")
+        for item in pending
+    )
+
+
 def _equal(a: float | None, b: float | None) -> bool:
     if a is None or b is None:
         return a is None and b is None
@@ -134,10 +144,10 @@ async def apply_cost_reconciliation(
                 not plan["rows"] or writer._last_hour > plan["rows"][-1]["start"]
             ):
                 raise ValueError("Cost checkpoint lies outside preview. Include the latest day")
-            if writer._pending:
+            if writer._pending and not _queued_hours_covered(writer._pending, plan):
                 raise ValueError(
-                    f"{len(writer._pending)} pending cost hour(s). "
-                    "Resolve pending jobs before correcting historical sums"
+                    "Queued cost jobs include hours this preview cannot independently price. "
+                    "Recover their missing energy or review the conflict before proceeding"
                 )
             # No Recorder mutation until backup has completed and been verified.
             backup_id = await manager._backup("before cost reconciliation")
@@ -153,8 +163,8 @@ async def apply_cost_reconciliation(
             async with writer._lock:
                 if manager.busy or (cost_manager and cost_manager.busy):
                     raise ValueError("A migration started during reconciliation")
-                if writer._pending:
-                    raise ValueError("Cost writer gained pending jobs. Retry after they clear")
+                if writer._pending and not _queued_hours_covered(writer._pending, plan):
+                    raise ValueError("An unverified pending cost hour cannot be retired safely")
                 if not incomplete:
                     # Detect a live measurement, plan edit or Recorder change
                     # while backup was running; do not write on stale evidence.
@@ -269,6 +279,17 @@ async def apply_cost_reconciliation(
                     writer._last_supply_date = plan["last_supply_date"]
                 writer._free_used = dict(plan["free_used"])
                 writer._free_uncertain_dates.update(plan["free_uncertain_dates"])
+                # Every retired pending job now has a verified Recorder cost
+                # row in the confirmed batch. Never discard a job whose
+                # original hour was missing or could not be priced.
+                if writer._pending:
+                    writer._pending = [
+                        job for job in writer._pending
+                        if int(job["start"]) not in {
+                            int(item["start"]) for item in plan["rows"]
+                            if item["source"] in ("verified", "recorded_sum")
+                        }
+                    ]
                 writer._unpriced_hours.difference_update(
                     int(item["start"]) for item in plan["rows"]
                     if item["source"] in ("verified", "recorded_sum")
