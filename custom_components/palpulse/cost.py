@@ -112,6 +112,89 @@ def price_verified_hour(
     )
 
 
+class SparseTariffBoundaryError(ValueError):
+    """Hourly counter energy cannot be assigned to multiple price bands."""
+
+
+def price_counter_verified_hour(
+    hour,
+    calibration: float,
+    options: Mapping[str, object],
+    time_zone: str,
+    previous_free_kwh: Mapping[str, float] | None = None,
+) -> tuple[float, frozenset[str], dict[str, float]]:
+    """Exact cost from sparse native minutes if the *whole* hour has one band.
+
+    First and last native minute counters must already have been verified by
+    counter_verified_sparse_hour. No energy or tariff allocation is estimated.
+    This works for a full free hour, including a capped allowance, or a
+    constant-rate paid hour, but never for a mixed tariff/date interval.
+    """
+    if not is_cost_enabled(options) or not 0 < calibration <= 1_000_000:
+        raise ValueError("Custom pricing and valid calibration are required")
+    if not 1 <= hour.missing_minutes <= 58 or hour.consumption_pulses < 0:
+        raise ValueError("Expected a counter-verified sparse native hour")
+    validate_pricing(options, require_excess_rate=False)
+    zone = ZoneInfo(time_zone)
+    first_date = None
+    first_band = None
+    for minute in range(60):
+        local = datetime.fromtimestamp(
+            hour.hour_start + minute * 60, timezone.utc
+        ).astimezone(zone)
+        date_key = local.date().isoformat()
+        if first_date is None:
+            first_date = date_key
+        elif first_date != date_key:
+            raise SparseTariffBoundaryError(
+                "Sparse UTC hour spans two local billing dates"
+            )
+        if free_window_active(options, local):
+            band = ("free", None)
+        else:
+            rate = price_for_datetime(
+                options, local, require_excess_rate=False,
+            )
+            if rate is None:
+                raise ValueError("Current tariff rate unavailable")
+            band = ("paid", rate)
+        if first_band is None:
+            first_band = band
+        elif band != first_band:
+            raise SparseTariffBoundaryError(
+                "Sparse UTC hour crosses multiple tariff bands"
+            )
+
+    kwh = Decimal(hour.consumption_pulses) / Decimal(str(calibration))
+    used = {
+        str(key): Decimal(str(value))
+        for key, value in (previous_free_kwh or {}).items()
+    }
+    if first_band[0] == "free":
+        prior = used.get(first_date, Decimal(0))
+        cap = Decimal(str(options.get(CONF_FREE_CAP_KWH, 0)))
+        if cap:
+            free_kwh = min(kwh, max(Decimal(0), cap - prior))
+            paid_kwh = kwh - free_kwh
+            overflow = Decimal(str(options.get(CONF_FREE_EXCESS_CENTS, 0))) / Decimal(100)
+            if paid_kwh > 0 and overflow <= 0:
+                raise ValueError(
+                    "A positive excess rate is required for a capped free window"
+                )
+            amount = paid_kwh * overflow
+        else:
+            amount = Decimal(0)
+        used[first_date] = prior + kwh
+    else:
+        amount = kwh * Decimal(str(first_band[1]))
+
+    return (
+        round(float(amount), 9),
+        frozenset({first_date}),
+        {key: float(value) for key, value in used.items()},
+    )
+
+
 def cost_for_verified_hour(
     samples: Iterable, calibration: float, options: Mapping[str, object],
     time_zone: str
