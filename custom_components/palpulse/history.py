@@ -15,7 +15,7 @@ from typing import Mapping
 HOUR_SECONDS = 3600
 RECORD_SECONDS = 60
 RECORDS_PER_HOUR = 60
-MAX_SPARSE_MISSING_MINUTES = 4  # Counter-verified energy only.
+MAX_SPARSE_MISSING_MINUTES = 58  # Exact counter deltas with both boundary minutes.
 MAX_BACKFILL_AGE = 7 * 86400  # older backfills require a separate reviewed import
 FUTURE_TOLERANCE = 120
 MAC_RE = re.compile(r"^[0-9a-f]{12}$", re.IGNORECASE)
@@ -120,8 +120,9 @@ def counter_verified_sparse_hour(
     """Recover exact hourly energy from cumulative endpoints, not estimated minutes.
 
     Both boundary readings are mandatory. Counter values must be monotonic,
-    adjacent native minutes exact, and gaps bounded. Such an hour may NEVER
-    be used to calculate a per-minute tariff.
+    adjacent native minutes exact, and gaps bounded. The end-to-end pulse
+    delta proves full-hour kWh even with 58 missing interior minutes, but
+    never proves minute-level allocation across a changing tariff.
     """
     samples = sorted(
         (record for stamp, record in records.items()
