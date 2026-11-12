@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2b3
+
+### What's Changed
+
+- **More reliable electricity costs.** Pending cost records are retried after Home Assistant restarts and every five minutes, even when the ESP32 has not sent a new measurement.
+- **Help for a $0 Energy dashboard.** PalPulse can check whether Home Assistant is using the recorded cost statistic. You can choose to link a verified PalPulse cost source and optionally keep that specific link working. Existing prices or other cost sources are never replaced automatically.
+- **Clearer status.** See delayed or missing cost hours, outstanding retries and whether the Energy dashboard is connected to PalPulse's cost statistic.
+- **Fewer false gaps.** Changing a dashboard-link or migration setting no longer gets mistaken for a change to your electricity tariff.
+
+### Experimental preview
+
+This build is **experimental**. **Back up Home Assistant, including Recorder/history, before upgrading.** Test live readings and costs against your electricity plan and retailer bill. Known missing hours without the original minute-level evidence remain unpriced rather than guessed. Your existing energy statistics and historical migration records are not rewritten.
+
 ## 0.2b2
 
 ### What's Changed
