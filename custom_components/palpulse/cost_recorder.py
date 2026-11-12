@@ -30,6 +30,7 @@ from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
     CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS, WINDOW_FIELDS,
+    price_for_datetime, free_window_active,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,6 +79,8 @@ class PalPulseCostRecorder:
         self._energy_cost_guidance = "Checking Home Assistant Energy settings"
         self.energy_importer = None
         self._recorder_conflict: dict | None = None
+        self._reconciled_cost_hours = 0
+        self._last_reconciled_utc_hour: int | None = None
 
     @property
     def status(self) -> dict:
@@ -106,6 +109,8 @@ class PalPulseCostRecorder:
             "energy_dashboard_cost_guidance": self._energy_cost_guidance,
             "energy_to_cost_lag_hours": lag_hours,
             "recorder_conflict": self._recorder_conflict,
+            "reconciled_cost_hours": self._reconciled_cost_hours,
+            "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
         }
 
     def _snapshot(self) -> dict:
@@ -123,6 +128,8 @@ class PalPulseCostRecorder:
             "last_retry_utc": self._last_retry_utc,
             "recovery_attempts": self._retry_count,
             "recorder_conflict": self._recorder_conflict,
+            "reconciled_cost_hours": self._reconciled_cost_hours,
+            "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
         }
 
     async def async_load(self) -> None:
@@ -140,6 +147,8 @@ class PalPulseCostRecorder:
         self._last_retry_utc = data.get("last_retry_utc")
         self._retry_count = int(data.get("recovery_attempts", 0))
         self._recorder_conflict = data.get("recorder_conflict")
+        self._reconciled_cost_hours = int(data.get("reconciled_cost_hours", 0))
+        self._last_reconciled_utc_hour = data.get("last_reconciled_utc_hour")
         current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -219,18 +228,133 @@ class PalPulseCostRecorder:
         async with self._lock:
             await self._store.async_save(self._snapshot())
 
-    async def _read(self, start: int, end: int) -> list[dict]:
+    async def _read(self, start: int, end: int, *, statistic_id: str | None = None) -> list[dict]:
+        """Read the real committed statistic, not an estimated Energy chart value."""
+        source_id = self.statistic_id if statistic_id is None else statistic_id
+
         def work():
             return statistics_during_period(
                 self.hass,
                 datetime.fromtimestamp(start, timezone.utc),
                 datetime.fromtimestamp(end, timezone.utc),
-                {self.statistic_id},
+                {source_id},
                 "hour",
                 {},
                 {"sum", "state"},
-            ).get(self.statistic_id, [])
+            ).get(source_id, [])
         return await self.hass.async_add_executor_job(work)
+
+    async def _recover_verified_unjournalled_hours(
+        self, missing: list[dict], next_hour: int,
+    ) -> None:
+        """Adopt only cost rows mathematically proven from independent energy.
+
+        The legacy writer sometimes commits a cost hour but loses its storage
+        checkpoint. A subsequent cost job cannot be written across that hour.
+        Reconcile only contiguous same-day, non-free, constant-rate hours with
+        a matching verified energy state and sum. Unknown free allocations,
+        supply days, changes of rate and mismatched sums remain blocked.
+        """
+        if self._last_hour is None or self._last_supply_date is None:
+            raise ValueError("No durable cost and supply checkpoint to reconcile")
+
+        stored = await self._read(self._last_hour, self._last_hour + 3600)
+        if (
+            len(stored) != 1
+            or int(stored[0]["start"]) != self._last_hour
+            or abs(float(stored[0]["sum"]) - self._sum) > 1e-6
+        ):
+            raise ValueError("Durable cost checkpoint differs from Recorder; no repair attempted")
+        cursor = self._last_hour
+        running_sum = self._sum
+        energy_id = f"{DOMAIN}:powerpal_{self.mac}_energy"
+        confirmed = []
+
+        for row in sorted(missing, key=lambda item: int(item["start"])):
+            stamp = int(row["start"])
+            if stamp != cursor + 3600 or stamp >= next_hour:
+                raise ValueError("Unjournalled cost rows are noncontiguous or overlap queued hours")
+            if stamp in self._transition_hours:
+                raise ValueError("Unjournalled cost hour overlaps a tariff transition")
+            profile = max(
+                (p for p in self._tariff_profiles if int(p["from"]) <= stamp),
+                key=lambda item: int(item["from"]),
+                default=None,
+            )
+            if profile is None or any(
+                stamp < int(p["from"]) < stamp + 3600 for p in self._tariff_profiles
+            ):
+                raise ValueError("Tariff provenance cannot be verified for the cost hour")
+
+            options = profile["options"]
+            zone = ZoneInfo(str(profile["timezone"]))
+            local_start = datetime.fromtimestamp(stamp, timezone.utc).astimezone(zone)
+            # No daily supply fee, free cap or local-date transition may
+            # change state when adopting a row without the original minutes.
+            if local_start.date().isoformat() != self._last_supply_date:
+                raise ValueError("Unjournalled hour may require a daily supply charge")
+            rate = None
+            for minute in range(60):
+                local = datetime.fromtimestamp(
+                    stamp + minute * 60, timezone.utc
+                ).astimezone(zone)
+                if (
+                    local.date() != local_start.date()
+                    or free_window_active(options, local)
+                ):
+                    raise ValueError("Unjournalled hour includes free or mixed billing dates")
+                price = price_for_datetime(options, local)
+                if price is None or not math.isfinite(price) or price < 0:
+                    raise ValueError("Unjournalled hour has no verifiable paid rate")
+                if rate is not None and abs(rate - price) > 1e-12:
+                    raise ValueError("Unjournalled hour crosses electricity price bands")
+                rate = price
+            # Require *both* physical counter states and imported cumulative
+            # energy sums to agree. This rejects missing-hour catch-up spikes.
+            energy = await self._read(
+                stamp - 3600, stamp + 3600, statistic_id=energy_id,
+            )
+            by_start = {int(item["start"]): item for item in energy}
+            if set(by_start) != {stamp - 3600, stamp} or len(energy) != 2:
+                raise ValueError("Adjacent verified energy hours are missing")
+            previous, current = by_start[stamp - 3600], by_start[stamp]
+            delta = float(current["sum"]) - float(previous["sum"])
+            physical_delta = float(current["state"]) - float(previous["state"])
+            if (
+                not math.isfinite(delta)
+                or not math.isfinite(physical_delta)
+                or delta < 0
+                or abs(delta - physical_delta) > 1e-6
+            ):
+                raise ValueError("Energy counter and cumulative sum do not reconcile")
+            expected = round(running_sum + round(delta * rate, 9), 9)
+            recorded = float(row["sum"])
+            state = float(row["state"])
+            if (
+                not math.isfinite(recorded)
+                or not math.isfinite(state)
+                or abs(recorded - expected) > 1e-6
+                or abs(state - recorded) > 1e-6
+            ):
+                raise ValueError("Unjournalled cost does not match verified energy and paid tariff")
+            confirmed.append((stamp, recorded))
+            running_sum = recorded
+            cursor = stamp
+
+        for stamp, recorded in confirmed:
+            # Save each verified checkpoint separately. On an interrupted
+            # write, retry remains idempotent and never changes Recorder.
+            self._last_hour = stamp
+            self._sum = recorded
+            self._reconciled_cost_hours += 1
+            self._last_reconciled_utc_hour = stamp
+            await self._store.async_save(self._snapshot())
+            _LOGGER.warning(
+                "PalPulse adopted existing verified paid cost hour %s for %s "
+                "without overwriting Recorder", stamp, self.mac,
+            )
+        self._recorder_conflict = None
+        await self._store.async_save(self._snapshot())
 
     async def async_import_verified_hour(self, hour, records: dict, calibration: float) -> None:
         """Persist a complete priced-hour job before energy advances its cursor."""
@@ -351,13 +475,16 @@ class PalPulseCostRecorder:
                     "queued_utc_hour": int(start),
                 }
                 await self._store.async_save(self._snapshot())
-                raise ValueError(
-                    f"Recorder has {len(pending)} existing cost hour(s) beyond "
-                    "the saved checkpoint. PalPulse cannot verify their "
-                    "origin or tariff state. No rows have been changed. "
-                    "Inspect cost import status and Recorder history before "
-                    "resuming"
-                )
+                try:
+                    await self._recover_verified_unjournalled_hours(
+                        pending, start,
+                    )
+                except (ValueError, TypeError, KeyError) as err:
+                    raise ValueError(
+                        f"Recorder has {len(pending)} existing cost hour(s) "
+                        "beyond the saved checkpoint. Automatic recovery "
+                        f"refused: {err}. Recorder rows were not changed"
+                    ) from err
         options = self.entry.options if options is None else options
         time_zone = time_zone or self.hass.config.time_zone
         local_zone = ZoneInfo(time_zone)
