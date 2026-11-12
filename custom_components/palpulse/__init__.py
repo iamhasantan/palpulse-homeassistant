@@ -34,6 +34,7 @@ from .history import (
     complete_hour,
     hourly_statistic,
     counter_verified_sparse_hour,
+    counter_verified_from_previous,
     parse_event,
 )
 
@@ -673,6 +674,15 @@ class PalPulseImporter:
                 and now >= start + 2 * HOUR_SECONDS + RECOVERY_GRACE_SECONDS
             ):
                 hour = counter_verified_sparse_hour(self._records, start)
+                if (
+                    hour is None
+                    and self._last_timestamp is not None
+                    and self._last_total is not None
+                ):
+                    hour = counter_verified_from_previous(
+                        self._records, start,
+                        self._last_timestamp, self._last_total,
+                    )
             skipped = 0
             if hour is None:
                 # Wait for late five-minute BLE polls and buffered API events.
