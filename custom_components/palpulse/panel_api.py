@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
-import re
 import time
 from typing import Any
 
@@ -20,7 +19,7 @@ from homeassistant.components.recorder.statistics import statistics_during_perio
 from homeassistant.core import callback
 
 from .const import DOMAIN, CONF_ACK_SERVICE
-from .checkpoint import parse_checkpoint_event, replay_eligible
+from .checkpoint import parse_checkpoint_event, replay_eligible, derive_replay_service
 
 _LOGGER = logging.getLogger(__name__)
 PANEL_WS_TYPE = "palpulse/panel_info"
@@ -75,16 +74,6 @@ def register_checkpoint_listener(hass, entry) -> None:
     entry.async_on_unload(unsub)
 
 
-def _replay_action(ack_service: str) -> str | None:
-    """Pair the native ACK service and its matching ESPHome replay action."""
-    if not re.fullmatch(
-        r"esphome\.[a-z][a-z0-9_]*_palpulse_ack_[0-9a-f]{8}",
-        ack_service,
-    ):
-        return None
-    return ack_service.replace("_palpulse_ack_", "_palpulse_replay_")
-
-
 async def _recent_statistics(hass, statistic_ids: tuple[str, str]) -> dict:
     """Read only a small recent UTC interval, preserving genuine missing hours."""
     end = int(time.time()) // 3600 * 3600 + 3600
@@ -134,7 +123,7 @@ async def ws_panel_info(hass, connection, msg) -> None:
         item = public_meter_summary(entry, importer, writer, migration, cost_migration)
         checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
         enabled, reason = replay_eligible(checkpoint, int(time.time()))
-        action = _replay_action(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+        action = derive_replay_service(str(entry.options.get(CONF_ACK_SERVICE) or ""))
         if not action or not hass.services.has_service(*action.split(".", 1)):
             enabled = False
             reason = "Matching ESPHome replay action not installed. Check firmware and ACK action setup."
@@ -194,7 +183,7 @@ async def ws_replay_checkpoint(hass, connection, msg) -> None:
 
     checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
     eligible, reason = replay_eligible(checkpoint, int(time.time()))
-    action = _replay_action(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+    action = derive_replay_service(str(entry.options.get(CONF_ACK_SERVICE) or ""))
     if not eligible or not action or not hass.services.has_service(*action.split(".", 1)):
         connection.send_result(msg["id"], {
             "accepted": False,
