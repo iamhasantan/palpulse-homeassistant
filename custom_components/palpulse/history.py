@@ -172,6 +172,61 @@ def counter_verified_sparse_hour(
     )
 
 
+def counter_verified_from_previous(
+    records: Mapping[int, Record],
+    start: int,
+    previous_timestamp: int,
+    previous_total: int,
+) -> CompletedHour | None:
+    """Prove full-hour kWh using the preceding saved native minute as anchor.
+
+    The current hour's first native record may be missing, but its last
+    record is required. The previous hour's final durable counter plus the
+    current final counter prove every pulse across this UTC hour without
+    inventing a missing observation. Returned first boundary is synthetic
+    and is never treated as a genuine minute sample for tariff allocation.
+    """
+    samples = sorted(
+        (record for stamp, record in records.items()
+         if start <= stamp < start + HOUR_SECONDS),
+        key=lambda item: item.timestamp,
+    )
+    if not 1 <= len(samples) < RECORDS_PER_HOUR:
+        return None
+    phase = samples[-1].timestamp % RECORD_SECONDS
+    if (
+        previous_timestamp != start + phase - RECORD_SECONDS
+        or previous_total < 0
+        or samples[-1].timestamp != start + phase + (RECORDS_PER_HOUR - 1) * RECORD_SECONDS
+    ):
+        return None
+    last_stamp = previous_timestamp
+    last_total = previous_total
+    for item in samples:
+        interval_seconds = item.timestamp - last_stamp
+        if interval_seconds <= 0 or interval_seconds % RECORD_SECONDS:
+            return None
+        count = interval_seconds // RECORD_SECONDS
+        change = item.total_pulses - last_total
+        if (
+            change < item.pulses
+            or change > count * 65535
+            or (count == 1 and change != item.pulses)
+        ):
+            return None
+        last_stamp = item.timestamp
+        last_total = item.total_pulses
+    return CompletedHour(
+        hour_start=start,
+        first_timestamp=start + phase,
+        last_timestamp=samples[-1].timestamp,
+        first_pulses=0,
+        first_total=previous_total,
+        last_total=last_total,
+        missing_minutes=RECORDS_PER_HOUR - len(samples),
+    )
+
+
 def hourly_statistic(hour: CompletedHour, baseline_pulses: int, calibration: float) -> tuple[float, float]:
     """Return (raw meter state, continuous sum since first complete hour)."""
     if hour.last_total < baseline_pulses:
