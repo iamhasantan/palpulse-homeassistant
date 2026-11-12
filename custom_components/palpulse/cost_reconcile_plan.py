@@ -122,19 +122,48 @@ def build_cost_plan(
     costs = {int(row["start"]): row for row in cost_rows}
     if len(energies) != len(energy_rows) or len(costs) != len(cost_rows):
         raise ValueError("Recorder returned duplicate statistic timestamps")
-    earlier_costs = [
-        (stamp, row) for stamp, row in costs.items() if stamp < start_utc
-    ]
-    anchor = max(earlier_costs, default=None, key=lambda x: x[0])
+    earlier_costs = sorted(
+        ((stamp, row) for stamp, row in costs.items() if stamp < start_utc),
+        key=lambda x: x[0], reverse=True,
+    )
+    # A historical cost migration may preserve a signed cumulative offset.
+    # It is not proof of a broken meter or invalid arithmetic. Never replace
+    # an existing negative *finite* baseline with zero, which would create a
+    # discontinuity and corrupt every subsequent recorded monetary total.
+    anchor = next(
+        ((stamp, row) for stamp, row in earlier_costs
+         if _num(row, "sum") is not None),
+        None,
+    )
     baseline = _num(anchor[1], "sum") if anchor else 0.0
-    if baseline is None or baseline < 0:
-        raise ValueError("No valid earlier monetary baseline")
-    old_prior = float(baseline)
+    baseline_issues = []
+    baseline_verified = True
+    if earlier_costs and anchor is None:
+        baseline_verified = False
+        baseline_issues.append(
+            "Earlier Recorder cost rows exist, but none have a finite sum. "
+            "Preview is available; historical writes are blocked until "
+            "the corrupted monetary baseline is reconciled."
+        )
+    elif earlier_costs and anchor[0] != earlier_costs[0][0]:
+        baseline_verified = False
+        baseline_issues.append(
+            "Latest earlier cost row has an invalid cumulative sum. "
+            "An older valid anchor was used for the preview only. "
+            "Do not apply before reviewing the discontinuity."
+        )
+    elif baseline < 0:
+        baseline_issues.append(
+            "The saved historical monetary baseline is negative. "
+            "Its signed offset is preserved, never silently reset. "
+            "Verify that this is a legitimate migration/credit before applying."
+        )
+    old_prior = float(baseline) if baseline_verified else None
     running = Decimal(str(baseline))
     free_used: dict[str, Decimal] = {}
     free_unknown: set[str] = set()
     supply_dates: set[str] = set()
-    issues = []
+    issues = [{"start": None, "reason": msg} for msg in baseline_issues]
     row_plans = []
     summaries: dict[str, dict] = {}
     missing_energy = 0
@@ -155,14 +184,29 @@ def build_cost_plan(
         old_state = _num(old, "state") if old is not None else None
         if old is not None and (
             old_sum is None or old_state is None
-            or old_sum < old_prior - TOLERANCE
+            or (old_prior is not None and old_sum < old_prior - TOLERANCE)
         ):
-            raise ValueError(f"Invalid existing cost counter at UTC {stamp}")
+            if not baseline_verified and old_sum is not None and old_state is not None:
+                # The first trustworthy cost row is a usable future anchor,
+                # but no charge can be inferred for the intervening interval.
+                issues.append({
+                    "start": stamp,
+                    "reason": "Existing cost baseline cannot be verified",
+                })
+                old_prior = old_sum
+            else:
+                raise ValueError(f"Invalid existing cost counter at UTC {stamp}")
         old_increment = None
         if old_sum is not None:
-            old_increment = max(0.0, old_sum - old_prior)
+            if old_prior is not None:
+                old_increment = max(0.0, old_sum - old_prior)
+                daily["recorded"] += old_increment
+            else:
+                issues.append({
+                    "start": stamp,
+                    "reason": "First cost row has no independently verified preceding total",
+                })
             old_prior = old_sum
-            daily["recorded"] += old_increment
 
         energy = energies.get(stamp)
         previous = energies.get(stamp - HOUR)
@@ -266,7 +310,10 @@ def build_cost_plan(
         "start_utc": start_utc, "end_utc": end_utc, "timezone": zone_name,
         "energy_digest": energy_fingerprint(energy_rows, start_utc, end_utc),
         "anchor_utc": anchor[0] if anchor else None,
-        "anchor_sum": float(baseline), "rows": row_plans,
+        "anchor_sum": float(baseline),
+        "baseline_verified": baseline_verified,
+        "baseline_issues": baseline_issues,
+        "rows": row_plans,
         "day_totals": [summaries[key] for key in sorted(summaries)],
         "issues": issues, "verified_hours": safe_rows,
         "retained_hours": retained_rows, "missing_energy_hours": missing_energy,

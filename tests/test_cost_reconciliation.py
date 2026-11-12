@@ -170,6 +170,32 @@ class CostReconciliationTests(unittest.TestCase):
         self.assertNotEqual(p["rows"][-1]["old_sum"], p["rows"][-1]["new_sum"])
         self.assertEqual(len(p["digest"]), 64)
 
+    def test_negative_finite_historical_cost_baseline_is_preserved(self):
+        start, _ = range_for_day("2026-11-09")
+        p = self.plan("2026-11-09", existing=[{
+            "start": start - 3600, "sum": -0.75, "state": -0.75,
+        }])
+        self.assertTrue(p["baseline_verified"])
+        self.assertEqual(p["anchor_sum"], -0.75)
+        self.assertAlmostEqual(p["last_sum"], 10.34297 - 0.75, places=5)
+        self.assertIn("negative", p["baseline_issues"][0])
+
+    def test_corrupt_latest_anchor_previews_but_blocks_writes(self):
+        start, _ = range_for_day("2026-11-09")
+        p = self.plan("2026-11-09", existing=[
+            {"start": start - 7200, "sum": 4.0, "state": 4.0},
+            {"start": start - 3600, "sum": float("nan"), "state": float("nan")},
+        ])
+        self.assertFalse(p["baseline_verified"])
+        self.assertEqual(p["anchor_sum"], 4.0)
+        self.assertTrue(p["baseline_issues"])
+        self.assertEqual(len(p["digest"]), 64)
+
+    def test_no_prior_cost_row_starts_with_zero_baseline(self):
+        p = self.plan("2026-11-09")
+        self.assertTrue(p["baseline_verified"])
+        self.assertEqual(p["anchor_sum"], 0.0)
+
     def test_unknown_previous_plan_is_not_assumed(self):
         start, end = range_for_day("2026-11-09")
         late = history.upsert_tariff_version(

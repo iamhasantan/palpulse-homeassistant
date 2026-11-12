@@ -40,6 +40,24 @@ class ESPCheckpointTests(unittest.TestCase):
         self.assertEqual(r["total_pulses"], 120000)
         self.assertEqual(cp.replay_eligible(r, NOW)[0], True)
 
+    def test_optional_ble_link_status_supports_old_and_new_firmware(self):
+        legacy = cp.parse_checkpoint_event(event(queue_size="0"), MAC, now=NOW)
+        self.assertIsNone(legacy["ble_connected"])
+        offline = cp.parse_checkpoint_event(
+            event(queue_size="0", ble_connected="false"), MAC, now=NOW,
+        )
+        self.assertIsNotNone(offline)
+        self.assertIs(offline["ble_connected"], False)
+        self.assertFalse(cp.replay_eligible(offline, NOW)[0])
+        self.assertIn("BLE connection", cp.replay_eligible(offline, NOW)[1])
+        online = cp.parse_checkpoint_event(
+            event(queue_size="0", ble_connected="true"), MAC, now=NOW,
+        )
+        self.assertTrue(cp.replay_eligible(online, NOW)[0])
+        self.assertIsNone(cp.parse_checkpoint_event(
+            event(ble_connected="unknown"), MAC, now=NOW,
+        ))
+
     def test_foreign_or_corrupt_events_are_ignored(self):
         self.assertIsNone(cp.parse_checkpoint_event(event(meter="ff:ee:dd:cc:bb:aa"), MAC, now=NOW))
         self.assertIsNone(cp.parse_checkpoint_event(event(total_pulses="119500"), MAC, now=NOW))

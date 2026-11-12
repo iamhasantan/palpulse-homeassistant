@@ -137,10 +137,18 @@ async def apply_cost_reconciliation(
             if saved.get("settings_revision") != revision(entry.options):
                 raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
             plan = saved["plan"]
+            if not plan.get("baseline_verified", True):
+                raise ValueError("Saved cost correction has an unverified monetary baseline")
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
             if plan["digest"] != digest:
                 raise ValueError("Recorder or tariff changed. Preview again before applying")
+            if not plan.get("baseline_verified", True):
+                raise ValueError(
+                    "The earlier monetary baseline contains invalid Recorder rows. "
+                    "Preview is read-only until those records are reviewed; "
+                    "no historical cost rows were modified"
+                )
             if not any(not _equal(row["old_sum"], row["new_sum"])
                        for row in plan["rows"]):
                 return {

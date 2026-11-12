@@ -44,6 +44,12 @@ def parse_checkpoint_event(data: dict, meter: str, *, now: int | None = None) ->
                 "checkpoint_dirty", "replay_fault",
             )
         }
+        # Firmware 0.2b4+ reports whether its BLE *meter* link is up.
+        # Legacy checkpoint events omit this field. Keep both compatible.
+        ble_connected = (
+            _flag(data["ble_connected"])
+            if "ble_connected" in data else None
+        )
         if not (
             0 <= ack <= checkpoint <= now + MAX_FUTURE_SECONDS
             and 0 <= ack_pulses <= counter < 2**64
@@ -61,6 +67,7 @@ def parse_checkpoint_event(data: dict, meter: str, *, now: int | None = None) ->
             "queue_size": queued,
             "buffer_oldest": oldest,
             "buffer_newest": newest,
+            "ble_connected": ble_connected,
             **flags,
             "received_at": now,
         }
@@ -74,6 +81,8 @@ def replay_eligible(report: dict | None, now: int) -> tuple[bool, str]:
         return False, "No ESP32 checkpoint report. Install matching ESPHome firmware and check connection."
     if now - int(report["received_at"]) > MAX_AGE_SECONDS:
         return False, "ESP32 checkpoint report is stale."
+    if report.get("ble_connected") is False:
+        return False, "ESP32 checkpoint received, but the Powerpal BLE connection is down."
     if not report["history_events"] or not report["reliable_history"]:
         return False, "Enable acknowledged history events in ESPHome first."
     if not report["nvs_ready"] or report["checkpoint_dirty"]:
