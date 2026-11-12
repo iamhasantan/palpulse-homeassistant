@@ -6,6 +6,8 @@ The existing pricing validator is the authority for all user-entered tariffs.
 from __future__ import annotations
 
 from hashlib import sha256
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 import math
 import re
@@ -71,7 +73,9 @@ def normalize_settings(
 
     for key, value in changes.items():
         if key == CONF_TARIFF_START:
-            updated[key] = validate_start_date(value)
+            updated[key] = validate_start_date(
+                value, today=datetime.now(ZoneInfo(timezone_name)).date(),
+            )
         elif key in NUMERIC:
             if value is None or value == "":
                 updated.pop(key, None)
