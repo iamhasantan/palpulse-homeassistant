@@ -23,6 +23,7 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN
 from .cost_reconcile_plan import billing_range, build_cost_plan, HOUR
 from .tariff_history import CONF_TARIFF_VERSIONS
+from .panel_settings import revision
 
 _LOGGER = logging.getLogger(__name__)
 MAX_RECONCILE_ROWS = 350
@@ -96,11 +97,12 @@ async def apply_cost_reconciliation(
         raise ValueError("Energy, cost recorder or verified backup manager unavailable")
     if manager.busy or (cost_manager is not None and cost_manager.busy):
         raise ValueError("An existing historical migration is active")
-    if not hass.data.setdefault(f"{DOMAIN}_cost_reconcile_active", {}).setdefault(
-        entry_id, False
-    ) is False:
+    active = hass.data.setdefault(f"{DOMAIN}_cost_reconcile_active", {})
+    if active.get(entry_id):
         raise ValueError("Another cost reconciliation is already running")
-    hass.data[f"{DOMAIN}_cost_reconcile_active"][entry_id] = True
+    active[entry_id] = True
+    store = None
+    saved = None
     try:
         store = Store(hass, 1, f"{DOMAIN}_cost_reconcile_{importer.mac}")
         saved = await store.async_load() or {}
@@ -113,6 +115,8 @@ async def apply_cost_reconciliation(
             ):
                 raise ValueError("An earlier repair is incomplete. Resume that same preview first")
             await manager._verify_prior_backup(saved["backup_id"])
+            if saved.get("settings_revision") != revision(entry.options):
+                raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
             plan = saved["plan"]
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
@@ -141,6 +145,7 @@ async def apply_cost_reconciliation(
                 "status": "prepared", "digest": digest,
                 "start_date": start_day, "end_date": end_day,
                 "backup_id": backup_id, "plan": plan, "rows_committed": 0,
+                "settings_revision": revision(entry.options),
             }
             await store.async_save(saved)
 
@@ -286,5 +291,20 @@ async def apply_cost_reconciliation(
                         "unverifiable hours remain explicitly flagged"
                     ),
                 }
+    except Exception:
+        # If no writes have even been queued, an unchanged prepared journal
+        # must not prevent a new preview after Recorder advanced during backup.
+        # Once writing starts we always retain the journal for safe resumption.
+        if (
+            store is not None and isinstance(saved, dict)
+            and saved.get("status") == "prepared"
+            and not saved.get("rows_committed")
+        ):
+            saved["status"] = "aborted"
+            try:
+                await store.async_save(saved)
+            except Exception:
+                _LOGGER.exception("Unable to checkpoint aborted PalPulse cost repair")
+        raise
     finally:
-        hass.data.get(f"{DOMAIN}_cost_reconcile_active", {}).pop(entry_id, None)
+        active.pop(entry_id, None)
