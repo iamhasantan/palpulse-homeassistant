@@ -246,6 +246,11 @@ class PalPulseCostRecorder:
         """
         if self._last_hour is None or self.energy_importer is None:
             return
+        data = getattr(self.hass, "data", {})
+        for key in (f"{DOMAIN}_migration", f"{DOMAIN}_cost_migration"):
+            manager = data.get(key, {}).get(self.entry.entry_id)
+            if manager is not None and manager.busy:
+                return
         cal = getattr(self.energy_importer, "_calibration", None)
         latest = self.energy_importer.health.get("last_completed_utc_hour")
         if cal is None or not (0 < float(cal) <= 1000000) or latest is None:
