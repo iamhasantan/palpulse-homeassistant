@@ -218,6 +218,22 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
 
+    async def test_resume_refuses_changed_energy_after_partial_cost_writes(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["status"], "writing")
+        self.energy_rows[self.start]["state"] += 0.2
+        self.fail_on_call = None
+        with self.assertRaisesRegex(ValueError, "Meter energy changed"):
+            await self.apply(plan["digest"])
+        self.assertEqual(
+            MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]["status"],
+            "writing",
+        )
+
     async def test_resumes_interrupted_batched_writes_without_double_charge(self):
         plan = await self.preview()
         self.fail_on_call = 2
