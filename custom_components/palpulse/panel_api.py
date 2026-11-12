@@ -21,6 +21,7 @@ from homeassistant.helpers.recorder import get_instance
 
 from .const import DOMAIN, CONF_ACK_SERVICE
 from .checkpoint import parse_checkpoint_event, replay_eligible, derive_replay_service
+from .history import normalize_mac
 from .panel_settings import revision, visible_settings, normalize_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,14 +72,38 @@ def register_checkpoint_listener(hass, entry) -> None:
     """Read ESPHome's reported NVS/ACK checkpoints, never alter them."""
     key = f"{DOMAIN}_checkpoint"
     store = hass.data.setdefault(key, {})
+    delivered = hass.data.setdefault(f"{DOMAIN}_checkpoint_delivery", {})
+    status = delivered.setdefault(entry.entry_id, {
+        "received_count": 0, "rejected_count": 0,
+        "last_event_at": None, "last_valid_at": None,
+        "last_rejection": None,
+    })
+    meter = normalize_mac(entry.data.get("meter_mac", ""))
 
     @callback
     def on_event(event) -> None:
-        snapshot = parse_checkpoint_event(
-            event.data, entry.data.get("meter_mac", ""),
-        )
+        # Only count events addressed to this meter; multiple PalPulse
+        # instances share the same Home Assistant event bus.
+        try:
+            if normalize_mac(str(event.data.get("meter", ""))) != meter:
+                return
+        except (ValueError, TypeError, AttributeError):
+            return
+        now = int(time.time())
+        status["received_count"] += 1
+        status["last_event_at"] = now
+        snapshot = parse_checkpoint_event(event.data, meter, now=now)
+        if snapshot is None:
+            status["rejected_count"] += 1
+            status["last_rejection"] = (
+                "Meter checkpoint telemetry failed validity checks. "
+                "Review timestamp, ACK, pulse counters, NVS state and ESPHome logs."
+            )
+            return
+        status["last_valid_at"] = now
+        status["last_rejection"] = None
+        store[entry.entry_id] = snapshot
         if snapshot is not None:
-            store[entry.entry_id] = snapshot
             # The firmware reports ACK progress once per minute. Request a
             # normal replay only when its saved meter counter is ahead of its
             # acknowledged cursor, the outgoing queue is empty and every
@@ -183,6 +208,8 @@ async def ws_panel_info(hass, connection, msg) -> None:
             enabled = False
             reason = "Matching ESPHome replay action not installed. Check firmware and ACK action setup."
         item["checkpoint"] = checkpoint
+        item["checkpoint_delivery"] = hass.data.get(f"{DOMAIN}_checkpoint_delivery", {}).get(entry_id)
+        item["history_delivery"] = hass.data.get(f"{DOMAIN}_history_delivery", {}).get(entry_id)
         try:
             from .gap_repair_runtime import preview_gaps
             item["energy_gap_previews"] = await preview_gaps(hass, importer)
