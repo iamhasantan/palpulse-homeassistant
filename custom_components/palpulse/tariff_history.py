@@ -38,7 +38,7 @@ def validate_start_date(value: object, *, today: date | None = None) -> str:
         raise ValueError("Invalid tariff effective date; use YYYY-MM-DD") from exc
     if value != parsed.isoformat():
         raise ValueError("Tariff effective date must be YYYY-MM-DD")
-    if parsed > (today or datetime.now(timezone.utc).date()):
+    if today is not None and parsed > today:
         raise ValueError("Future tariff activation is not supported in this beta")
     if parsed.year < 2020:
         raise ValueError("Tariff start date is implausibly old")
@@ -84,8 +84,10 @@ def upsert_tariff_version(
     *, today: date | None = None,
 ) -> list[dict]:
     """Store a deliberate rate revision without altering older dates."""
-    effective_from = validate_start_date(effective_from, today=today)
-    ZoneInfo(timezone_name)
+    zone = ZoneInfo(timezone_name)
+    effective_from = validate_start_date(
+        effective_from, today=today or datetime.now(zone).date(),
+    )
     snapshot = captured_tariff(options)
     validate_pricing(snapshot)
     history = [p for p in validate_versions(versions or [])
