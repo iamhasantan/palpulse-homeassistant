@@ -25,5 +25,7 @@ jobs:
           python -m json.tool custom_components/palpulse/strings.json >/dev/null
           python -m json.tool custom_components/palpulse/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
+      - name: Check sidebar JavaScript syntax
+        run: node --check custom_components/palpulse/frontend/palpulse-panel.js
       - name: Accounting regression tests
         run: python -m unittest discover -s tests -v

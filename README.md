@@ -26,6 +26,37 @@ You'll need Home Assistant **2026.11 or newer**, an ESP32, a supported Powerpal 
 
 The optional **acknowledged history transport** is a preview feature. It requires matching ESPHome firmware and an additional native-API action setting. Use the [setup and recovery guide](docs/setup-and-recovery.md) before enabling it.
 
+## PalPulse sidebar dashboard
+
+The new **PalPulse** item in Home Assistant's sidebar opens a dedicated control
+centre. It brings together current Powerpal health, your electricity plan,
+cost-writer errors, recent hourly Recorder statistics, migration progress,
+backups and ESP32 recovery in one place.
+
+- **Overview** shows energy and cost status. A missing cost record appears as
+  missing, not as free electricity.
+- **Electricity** shows your saved tariff and any blocked cost checkpoint.
+- **Hourly history** displays real Recorder hours and lets you export a CSV.
+- **ESP32 recovery** compares the firmware's saved meter and ACK checkpoints
+  with Home Assistant's last verified hour. If supported and safe, you can ask
+  ESPHome to retry buffered history from its existing acknowledged cursor.
+- **Migration** takes you to the existing backup-first Preview, Import, Resume
+  and Undo screens. It doesn't bypass their confirmations.
+- **Backups** can request an automatic Home Assistant backup. **Confirm that it
+  finished and includes Recorder/history before changing anything.**
+
+The panel is visible to Home Assistant administrators. It handles multiple
+Powerpal meters separately and doesn't require a manually imported Lovelace
+dashboard.
+
+**Checkpoint replay needs PalPulse ESPHome 0.2b2 or newer**, reliable history
+enabled, and the matching ACK action configured in the Home Assistant
+integration. Earlier ESPHome builds can still record electricity as before,
+but won't provide checkpoint telemetry or the manual replay action. Replaying
+only works while the original minute records remain in the Powerpal's buffer.
+It cannot fill hours that are no longer available or derive missing
+time-of-use charges.
+
 ## A simpler settings screen
 
 Open **Settings → Devices & services → PalPulse for Home Assistant → Configure**.

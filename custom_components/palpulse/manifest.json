@@ -14,7 +14,10 @@
   "config_flow": true,
   "dependencies": [
     "backup",
-    "recorder"
+    "recorder",
+    "frontend",
+    "websocket_api",
+    "http"
   ],
   "documentation": "https://github.com/iamhasantan/palpulse-homeassistant",
   "integration_type": "service",
