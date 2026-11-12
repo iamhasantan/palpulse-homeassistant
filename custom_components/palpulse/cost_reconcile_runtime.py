@@ -22,7 +22,9 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .cost_reconcile_plan import billing_range, build_cost_plan, HOUR
-from .tariff_history import CONF_TARIFF_VERSIONS
+from .tariff_history import (
+    CONF_TARIFF_VERSIONS, captured_tariff, validate_versions,
+)
 from .panel_settings import revision
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,6 +77,13 @@ async def preview_cost_reconciliation(
     if end <= start:
         raise ValueError("No completed hours in the selected date range")
     versions = entry.options.get(CONF_TARIFF_VERSIONS, [])
+    latest = validate_versions(versions)[-1:] if versions else []
+    if latest and latest[0]["options"] != captured_tariff(entry.options):
+        raise ValueError(
+            "Your current electricity rates differ from the newest dated "
+            "tariff profile. Save the actual plan effective date and rates "
+            "in the PalPulse Electricity tab before recalculating history"
+        )
     meter = entry.data["meter_mac"]
     cost_id = f"{DOMAIN}:powerpal_{meter}_cost"
     energy_id = f"{DOMAIN}:powerpal_{meter}_energy"
