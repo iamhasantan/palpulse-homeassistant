@@ -159,6 +159,61 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
         self.assertAlmostEqual(self.rows[BASE]["sum"], .0375)
 
+    async def test_missing_paid_cost_recovers_from_untampered_energy(self):
+        first, samples = build_hour(BASE, 40000)
+        self.recorder._last_hour = BASE
+        self.recorder._sum = .0375
+        self.recorder._last_supply_date = datetime.fromtimestamp(
+            BASE, ZoneInfo("Australia/Melbourne")
+        ).date().isoformat()
+        self.rows[BASE] = {"start": BASE, "state": .0375, "sum": .0375}
+        self.energy_rows[BASE] = {
+            "start": BASE,
+            "state": first.last_total / base.CAL,
+            "sum": 600 / base.CAL,
+        }
+        second, _ = build_hour(BASE + 3600, 40600)
+        self.energy_rows[BASE + 3600] = {
+            "start": BASE + 3600,
+            "state": second.last_total / base.CAL,
+            "sum": 1200 / base.CAL,
+        }
+        self.recorder.energy_importer = types.SimpleNamespace(
+            _calibration=base.CAL,
+            health={"last_completed_utc_hour": BASE + 3600},
+        )
+        await self.recorder.async_recover_pending()
+        self.assertAlmostEqual(self.rows[BASE + 3600]["sum"], .075)
+        self.assertEqual(
+            self.recorder.status["recovered_cost_from_energy_hours"], 1,
+        )
+        await self.recorder.async_recover_pending()
+        self.assertEqual(
+            self.recorder.status["recovered_cost_from_energy_hours"], 1,
+        )
+
+    async def test_missing_cost_refuses_energy_mismatch(self):
+        self.recorder._last_hour = BASE
+        self.recorder._sum = .0375
+        self.recorder._last_supply_date = datetime.fromtimestamp(
+            BASE, ZoneInfo("Australia/Melbourne")
+        ).date().isoformat()
+        self.energy_rows[BASE] = {
+            "start": BASE, "state": 100, "sum": 500,
+        }
+        self.energy_rows[BASE + 3600] = {
+            "start": BASE + 3600, "state": 101, "sum": 505,
+        }
+        self.recorder.energy_importer = types.SimpleNamespace(
+            _calibration=base.CAL,
+            health={"last_completed_utc_hour": BASE + 3600},
+        )
+        await self.recorder.async_recover_pending()
+        self.assertNotIn(BASE + 3600, self.rows)
+        self.assertEqual(
+            self.recorder.status["recovered_cost_from_energy_hours"], 0,
+        )
+
     async def test_pending_cost_recovers_at_startup_without_new_meter_data(self):
         hour, samples = build_hour(BASE, 40000)
         with patch.object(
