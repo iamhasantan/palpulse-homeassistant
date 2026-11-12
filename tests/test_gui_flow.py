@@ -308,6 +308,8 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next_step["step_id"], "wizard_cost_choice")
         self.assertEqual(self.flow._wizard_pending["weekday_free"], "11:00-16:00")
         self.assertEqual(self.flow._wizard_pending["weekend_free"], "11:00-16:00")
+        self.assertEqual(self.flow._wizard_pending["weekday_peak"], "16:00-21:00")
+        self.assertEqual(self.flow._wizard_pending["weekend_peak"], "16:00-21:00")
         review = await self.flow.async_step_wizard_cost_choice(
             {"configure_old_costs": False}
         )
@@ -345,7 +347,7 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid["free_excess_cents_per_kwh"], 0)
         self.assertNotIn("free_excess_cents_per_kwh", self.flow._wizard_pending)
 
-    async def test_power5_reports_conflicts_with_inherited_peak_shoulder_schedule(self):
+    async def test_power5_replaces_inherited_incompatible_shoulder_schedule(self):
         self.flow.config_entry.options = {
             "pricing_mode": "custom_time_of_use",
             "weekday_peak": "16:00-21:00",
@@ -363,7 +365,9 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
             "daily_free_cap_kwh": 15,
         }
         screen = await self.flow.async_step_wizard_red_power5(payload)
-        self.assertEqual(screen["errors"]["base"], "existing_schedule_overlap")
+        self.assertEqual(screen["step_id"], "wizard_cost_choice")
+        self.assertEqual(self.flow._wizard_pending["weekday_peak"], "16:00-21:00")
+        self.assertEqual(self.flow._wizard_pending["weekday_shoulder"], "")
         self.assertEqual(
             self.flow.config_entry.options["weekday_shoulder"], "17:00-19:00"
         )
