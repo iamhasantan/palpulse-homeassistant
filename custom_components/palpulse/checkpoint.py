@@ -80,6 +80,8 @@ def replay_eligible(report: dict | None, now: int) -> tuple[bool, str]:
         return False, "ESP32 checkpoint is not confirmed saved to NVS."
     if report["replay_fault"]:
         return False, "ESP32 reported a replay fault. Check BLE logs; no automatic cursor reset."
+    if report["queue_size"] != 0:
+        return False, "ESP32 has unacknowledged records queued; allow ACK delivery to finish."
     if report["ack_timestamp"] > report["checkpoint_timestamp"]:
         return False, "ESP32 ACK is newer than its saved meter checkpoint."
     if report["buffer_oldest"] and report["ack_timestamp"] and (
