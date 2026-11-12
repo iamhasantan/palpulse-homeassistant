@@ -357,9 +357,15 @@ class PalPulseImporter:
         if self._ack_timestamp is None:
             self._ack_timestamp = record.timestamp
             self._ack_total = record.total_pulses
-        elif record.timestamp == self._ack_timestamp + RECORD_SECONDS and (
-            record.total_pulses == self._ack_total + record.pulses
+        elif (
+            record.timestamp > self._ack_timestamp
+            and record.timestamp % RECORD_SECONDS == self._ack_timestamp % RECORD_SECONDS
+            and record.total_pulses >= self._ack_total + record.pulses
         ):
+            # The Powerpal buffer may have real missing native minutes. Once a
+            # later event is durably journalled, ACK it even when timestamps
+            # are not consecutive. The firmware only sends one event until
+            # this exact ACK is accepted, so we never skip a queued event.
             self._ack_timestamp = record.timestamp
             self._ack_total = record.total_pulses
         # The recorder/pending ledger must reach storage before an ESP32 ACK.
@@ -582,6 +588,11 @@ class PalPulseImporter:
                 if start + HOUR_SECONDS > cutoff:
                     continue
                 hour = complete_hour(self._records, start)
+                if (
+                    hour is None
+                    and now >= start + 2 * HOUR_SECONDS + RECOVERY_GRACE_SECONDS
+                ):
+                    hour = counter_verified_sparse_hour(self._records, start)
                 if hour is None:
                     continue
                 base = hour.first_total - hour.first_pulses
@@ -705,13 +716,13 @@ class PalPulseImporter:
             await self._verified_import([
                 self._statistic(hour, next_accounted, recorder_sum),
             ])
-            # Sparse endpoints prove energy but not minute-specific pricing.
-            # Never invent a cost or consume an unverifiable free allowance.
-            if hour.missing_minutes == 0:
-                if cost_recorder := getattr(self, "cost_recorder", None):
-                    await cost_recorder.async_import_verified_hour(
-                        hour, self._records, self._calibration
-                    )
+            # A sparse hour can still have an *exact* price when its entire
+            # interval has one rate or one capped-free band. The writer
+            # verifies this independently and refuses mixed tariffs.
+            if cost_recorder := getattr(self, "cost_recorder", None):
+                await cost_recorder.async_import_verified_hour(
+                    hour, self._records, self._calibration
+                )
             self._accounted_pulses = next_accounted
             if permitted_device_rebase:
                 self._device_rebase_deadline = None
@@ -752,7 +763,8 @@ class PalPulseImporter:
             elif hour.missing_minutes:
                 self._status_message = (
                     f"Counter-verified UTC hour {hour.hour_start}; "
-                    f"{hour.missing_minutes} missing minute(s), cost withheld"
+                    f"{hour.missing_minutes} missing minute(s); cost "
+                    "recovery attempted only for uniform tariff bands"
                 )
             elif not permitted_device_rebase:
                 self._status_message = (
