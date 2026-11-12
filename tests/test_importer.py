@@ -181,6 +181,31 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             BASE, hass.data["palpulse"][entry.entry_id]._records
         )
 
+    async def test_persisted_measurements_retry_without_a_new_event(self):
+        """A restart must not strand complete buffered energy hours."""
+        start = BASE
+        self.importer._calibration = CAL
+        self.importer._records = {
+            start + minute * 60: palpulse.Record(
+                start + minute * 60, 10, 40000 + (minute + 1) * 10, CAL,
+            )
+            for minute in range(60)
+        }
+        timer = types.ModuleType("homeassistant.helpers.event")
+        periodic = []
+        timer.async_track_time_interval = lambda _hass, callback, _period: (
+            periodic.append(callback) or (lambda: None)
+        )
+        with patch.dict(sys.modules, {"homeassistant.helpers.event": timer}):
+            with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+                await self.importer.async_start()
+                self.assertEqual(self.importer.health["last_completed_utc_hour"], BASE)
+                self.assertEqual(len(RECORDER_IMPORTS), 1)
+                self.assertEqual(len(periodic), 1)
+                await periodic[0](None)
+                self.assertEqual(len(RECORDER_IMPORTS), 1)
+                await self.importer.async_flush()
+
     async def test_hourly_import_and_duplicate(self):
         await self.feed_hour(BASE, 40000)
         self.assertEqual(len(RECORDER_IMPORTS), 1)
