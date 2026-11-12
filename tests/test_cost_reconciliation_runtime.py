@@ -179,6 +179,23 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "complete",
         )
 
+    async def test_proven_pending_job_retires_only_after_verified_write(self):
+        self.writer._pending = [{"start": self.end - 3600, "samples": []}]
+        plan = await self.preview()
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.writer._pending, [])
+        self.assertAlmostEqual(self.cost_rows[self.end - 3600]["sum"], 10.34297, places=5)
+
+    async def test_unproven_pending_job_blocks_without_backup(self):
+        # A pending charge for a truly missing hour must remain journalled.
+        self.writer._pending = [{"start": self.end - 25 * 3600, "samples": []}]
+        plan = await self.preview()
+        with self.assertRaisesRegex(ValueError, "Queued cost jobs"):
+            await self.apply(plan["digest"])
+        self.manager._backup.assert_not_awaited()
+        self.assertEqual(len(self.writer._pending), 1)
+
     async def test_changed_plan_refused_without_backup_or_writer_changes(self):
         plan = await self.preview()
         self.energy_rows[self.start]["sum"] += 0.75
