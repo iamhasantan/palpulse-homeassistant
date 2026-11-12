@@ -26,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 PANEL_WS_TYPE = "palpulse/panel_info"
 REPLAY_WS_TYPE = "palpulse/replay_checkpoint"
 SAVE_WS_TYPE = "palpulse/save_settings"
+LINK_COST_WS_TYPE = "palpulse/link_verified_cost"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
 REPLAY_COOLDOWN_SECONDS = 300
 
@@ -302,6 +303,50 @@ async def ws_save_settings(hass, connection, msg) -> None:
         "settings_revision": revision(updated),
     })
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): LINK_COST_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_link_verified_cost(hass, connection, msg) -> None:
+    """Link only an unconfigured PalPulse grid source after Recorder verification."""
+    if not msg["confirm"]:
+        connection.send_result(msg["id"], {
+            "linked": False, "message": "Confirm the Energy cost link before changing it.",
+        })
+        return
+    entries = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == msg["entry_id"]
+    ]
+    if len(entries) != 1:
+        connection.send_result(msg["id"], {
+            "linked": False, "message": "The selected meter was not found.",
+        })
+        return
+    entry = entries[0]
+    meter = entry.data.get("meter_mac", "")
+    from .dashboard_cost import async_link_verified_cost
+    writer = hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id)
+    try:
+        result = await async_link_verified_cost(
+            hass, f"{DOMAIN}:powerpal_{meter}_energy",
+            f"{DOMAIN}:powerpal_{meter}_cost", writer,
+        )
+    except Exception:
+        _LOGGER.exception("PalPulse Energy cost link failed")
+        connection.send_result(msg["id"], {
+            "linked": False, "message": "Energy settings could not be verified. No link was confirmed.",
+        })
+        return
+    connection.send_result(msg["id"], {
+        "linked": result.status == "linked",
+        "status": result.status, "message": result.guidance,
+    })
+
 def async_register_panel_api(hass) -> None:
     """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
@@ -310,4 +355,5 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_panel_info)
     websocket_api.async_register_command(hass, ws_replay_checkpoint)
     websocket_api.async_register_command(hass, ws_save_settings)
+    websocket_api.async_register_command(hass, ws_link_verified_cost)
     hass.data[key] = True
