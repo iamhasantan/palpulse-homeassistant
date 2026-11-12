@@ -220,6 +220,53 @@ class CostTests(unittest.TestCase):
             frozenset({"2026-11-09"}),
         )
 
+    def test_sparse_exact_usage_costed_only_in_uniform_tariff_window(self):
+        from types import SimpleNamespace
+        o = options()
+        o[CONF_WEEKDAY_FREE] = "11:00-16:00"
+        o[CONF_FREE_CAP_KWH] = 15
+        o[CONF_FREE_EXCESS_CENTS] = 16.412
+        o[CONF_WEEKDAY_PEAK] = "16:00-21:00"
+        o[CONF_WEEKDAY_SHOULDER] = ""
+        zone = ZoneInfo("Australia/Melbourne")
+        at_15 = int(datetime(2026, 11, 12, 15, tzinfo=zone).timestamp())
+        hour = SimpleNamespace(
+            hour_start=at_15, missing_minutes=58, consumption_pulses=7200
+        )
+        total, dates, used = cost.price_counter_verified_hour(
+            hour, 3600, o, "Australia/Melbourne", {"2026-11-12": 14.0},
+        )
+        # 2kWh used. 1kWh free remains, 1kWh charged at excess.
+        self.assertAlmostEqual(total, 0.16412)
+        self.assertEqual(used["2026-11-12"], 16.0)
+        self.assertEqual(dates, frozenset({"2026-11-12"}))
+
+        hour.hour_start = int(datetime(
+            2026, 11, 12, 16, tzinfo=zone
+        ).timestamp())
+        total, _, _ = cost.price_counter_verified_hour(
+            hour, 3600, o, "Australia/Melbourne",
+        )
+        self.assertAlmostEqual(total, 2 * .5)
+
+    def test_sparse_hour_crossing_billing_boundary_refuses_cost(self):
+        from types import SimpleNamespace
+        o = options()
+        o[CONF_WEEKDAY_PEAK] = "16:00-21:00"
+        o[CONF_WEEKDAY_SHOULDER] = ""
+        o[CONF_WEEKDAY_FREE] = "11:30-16:00"
+        zone = ZoneInfo("Australia/Melbourne")
+        hour = SimpleNamespace(
+            hour_start=int(datetime(
+                2026, 11, 12, 11, tzinfo=zone
+            ).timestamp()),
+            missing_minutes=1, consumption_pulses=3600,
+        )
+        with self.assertRaises(cost.SparseTariffBoundaryError):
+            cost.price_counter_verified_hour(
+                hour, 3600, o, "Australia/Melbourne",
+            )
+
     def test_partial_hour_is_rejected(self):
         tz = ZoneInfo("Australia/Melbourne")
         with self.assertRaises(ValueError):
