@@ -532,17 +532,9 @@ class PalPulseCostRecorder:
             samples, calibration, options, time_zone,
             self._free_used,
         )
-        requires_excess = any(
-            free_window_active(
-                options, datetime.fromtimestamp(
-                    record.timestamp, timezone.utc
-                ).astimezone(local_zone),
-            )
-            for record in samples
-        )
         supply, charged_date = supply_charge_for_dates(
             dates, self._last_supply_date, options,
-            require_excess_rate=requires_excess,
+            require_excess_rate=False,
         )
         next_sum = round(self._sum + usage + supply, 9)
 
