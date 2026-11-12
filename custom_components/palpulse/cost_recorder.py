@@ -248,7 +248,7 @@ class PalPulseCostRecorder:
             return
         data = getattr(self.hass, "data", {})
         for key in (f"{DOMAIN}_migration", f"{DOMAIN}_cost_migration"):
-            manager = data.get(key, {}).get(self.entry.entry_id)
+            manager = data.get(key, {}).get(getattr(self.entry, "entry_id", None))
             if manager is not None and manager.busy:
                 return
         cal = getattr(self.energy_importer, "_calibration", None)
