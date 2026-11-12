@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import re
 import time
 from typing import Any
 
@@ -16,11 +17,16 @@ import probatio
 
 from homeassistant.components import websocket_api
 from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.core import callback
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_ACK_SERVICE
+from .checkpoint import parse_checkpoint_event, replay_eligible
 
 _LOGGER = logging.getLogger(__name__)
 PANEL_WS_TYPE = "palpulse/panel_info"
+REPLAY_WS_TYPE = "palpulse/replay_checkpoint"
+CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
+REPLAY_COOLDOWN_SECONDS = 300
 
 _PRICING_FIELDS = (
     "pricing_mode", "flat_cents_per_kwh", "peak_cents_per_kwh",
@@ -50,6 +56,33 @@ def public_meter_summary(entry, importer, writer, energy_migration, cost_migrati
             "cost": f"{DOMAIN}:powerpal_{mac}_cost",
         },
     }
+
+
+def register_checkpoint_listener(hass, entry) -> None:
+    """Read ESPHome's reported NVS/ACK checkpoints, never alter them."""
+    key = f"{DOMAIN}_checkpoint"
+    store = hass.data.setdefault(key, {})
+
+    @callback
+    def on_event(event) -> None:
+        snapshot = parse_checkpoint_event(
+            event.data, entry.data.get("meter_mac", ""),
+        )
+        if snapshot is not None:
+            store[entry.entry_id] = snapshot
+
+    unsub = hass.bus.async_listen(CHECKPOINT_EVENT, on_event)
+    entry.async_on_unload(unsub)
+
+
+def _replay_action(ack_service: str) -> str | None:
+    """Pair the native ACK service and its matching ESPHome replay action."""
+    if not re.fullmatch(
+        r"esphome\.[a-z][a-z0-9_]*_palpulse_ack_[0-9a-f]{8}",
+        ack_service,
+    ):
+        return None
+    return ack_service.replace("_palpulse_ack_", "_palpulse_replay_")
 
 
 async def _recent_statistics(hass, statistic_ids: tuple[str, str]) -> dict:
@@ -99,6 +132,16 @@ async def ws_panel_info(hass, connection, msg) -> None:
         migration = hass.data.get(f"{DOMAIN}_migration", {}).get(entry_id)
         cost_migration = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry_id)
         item = public_meter_summary(entry, importer, writer, migration, cost_migration)
+        checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
+        enabled, reason = replay_eligible(checkpoint, int(time.time()))
+        action = _replay_action(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+        if not action or not hass.services.has_service(*action.split(".", 1)):
+            enabled = False
+            reason = "Matching ESPHome replay action not installed. Check firmware and ACK action setup."
+        item["checkpoint"] = checkpoint
+        item["replay_service"] = action
+        item["replay_available"] = enabled
+        item["replay_guidance"] = reason
         try:
             item["recent"] = await _recent_statistics(
                 hass,
@@ -114,10 +157,81 @@ async def ws_panel_info(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"meters": meters, "generated_at": int(time.time())})
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): REPLAY_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_replay_checkpoint(hass, connection, msg) -> None:
+    """Request ordinary acknowledged replay, never move the NVS/ACK cursor."""
+    entry_id = msg["entry_id"]
+    entries = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == entry_id
+    ]
+    if len(entries) != 1 or not msg["confirm"]:
+        connection.send_result(msg["id"], {
+            "accepted": False, "message": "Select a configured meter and confirm replay.",
+        })
+        return
+    entry = entries[0]
+    importer = hass.data.get(DOMAIN, {}).get(entry_id)
+    manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry_id)
+    cost_manager = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry_id)
+    if (
+        importer is None
+        or importer.health["status"] == "Halted"
+        or (manager is not None and manager.busy)
+        or (cost_manager is not None and cost_manager.busy)
+    ):
+        connection.send_result(msg["id"], {
+            "accepted": False,
+            "message": "Importer unavailable or historical migration active. Replay was not requested.",
+        })
+        return
+
+    checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
+    eligible, reason = replay_eligible(checkpoint, int(time.time()))
+    action = _replay_action(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+    if not eligible or not action or not hass.services.has_service(*action.split(".", 1)):
+        connection.send_result(msg["id"], {
+            "accepted": False,
+            "message": reason if not eligible else "Matching ESPHome replay action is unavailable.",
+        })
+        return
+    last = hass.data.setdefault(f"{DOMAIN}_replay_request", {}).get(entry_id, 0)
+    if time.monotonic() - last < REPLAY_COOLDOWN_SECONDS:
+        connection.send_result(msg["id"], {
+            "accepted": False, "message": "A replay was already requested recently. Check the meter status.",
+        })
+        return
+    domain, service = action.split(".", 1)
+    try:
+        await hass.services.async_call(domain, service, {}, blocking=False)
+    except Exception:
+        _LOGGER.exception("PalPulse replay action call failed for entry %s", entry_id)
+        connection.send_result(msg["id"], {
+            "accepted": False, "message": "ESPHome replay action failed. Check ESPHome connectivity and logs.",
+        })
+        return
+    hass.data[f"{DOMAIN}_replay_request"][entry_id] = time.monotonic()
+    connection.send_result(msg["id"], {
+        "accepted": True,
+        "message": (
+            "ESPHome replay requested from its saved ACK checkpoint. This is "
+            "not confirmation that missing hours were recovered. Refresh the "
+            "checkpoint and Recorder history to check actual progress."
+        ),
+    })
+
+
 def async_register_panel_api(hass) -> None:
-    """The WebSocket command belongs to HA's lifetime, not one meter entry."""
+    """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
     if hass.data.get(key):
         return
     websocket_api.async_register_command(hass, ws_panel_info)
+    websocket_api.async_register_command(hass, ws_replay_checkpoint)
     hass.data[key] = True
