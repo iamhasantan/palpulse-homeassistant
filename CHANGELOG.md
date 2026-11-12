@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.2b8
+
+### What's Changed
+
+- **Best-effort exact energy.** Recover verified hourly usage when up to 58 interior minute records are missing but native first/last counter endpoints agree. Retain the original timestamp, detect counter conflicts and refuse fabricated allocations.
+- **Recover more actual costs.** Price sparse counter-verified hours that fall entirely in one tariff band, including a tracked capped-free interval. Recover other missing fixed-band cost hours from adjacent Home Assistant Recorder energy states only when physical and cumulative deltas agree. Never overwrite existing different Recorder cost statistics.
+- **Repair legacy blocked tariff jobs.** Once the owner enters the real positive excess rate and corrects the known Red Power5 evening-peak omission, upgrade only uncommitted matching cost jobs and account for confirmed historic energy. Preserve the earlier tariff provenance for unrelated profiles.
+- **Self-healing replay and retry.** On startup and every five minutes, retry persisted energy and cost work independently of new ESP32 events. With ESPHome 0.2b3 acknowledged firmware and the verified ACK service, request safe buffered replay when a saved checkpoint is behind. Avoid the ACK deadlock caused by genuine native-minute gaps.
+- **Correct Red Power5 setup.** The Red Power5 guided wizard includes 4pm-9pm evening peak windows; the dashboard warns when a nonzero peak rate lacks time windows. Show recorded cost repair counts.
+
+### Experimental preview
+
+Back up Home Assistant including Recorder/history before upgrading; preserve the ESP32 NVS and original YAML. This is a beta, not a retailer-verified bill. No already-committed history or cost rows are rewritten, and missing data beyond Powerpal's buffer may remain unrecoverable. Uncertain free-cap allocations, mixed-band sparse hours, earlier skipped historical gaps and Recorder conflicts are reported rather than guessed. Live HAOS and Powerpal hardware acceptance remain outstanding.
+
+
 ## 0.2b7
 
 ### What's Changed
