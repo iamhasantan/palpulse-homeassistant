@@ -43,11 +43,25 @@ async def _read_energy(hass, statistic_id: str) -> list[dict]:
 
 async def preview_gaps(hass, importer) -> list[dict]:
     """The report is read-only; candidates are revalidated before every write."""
-    return [
+    items = [
         plan.as_dict() for plan in plan_recoverable_gaps(
             await _read_energy(hass, importer.statistic_id),
         )
     ]
+    # A crash after a Recorder sum shift suppresses the original preview,
+    # even when the missing row still needs writing. Surface unfinished
+    # journal entries so the administrator can safely resume them.
+    saved = await Store(
+        hass, 1, f"{DOMAIN}_hour_gap_repair_{importer.mac}"
+    ).async_load() or {}
+    if saved.get("status") not in (None, "complete") and saved.get("plan"):
+        pending = dict(saved["plan"], resume_required=True)
+        items = [
+            item for item in items
+            if int(item["gap_start"]) != int(pending["gap_start"])
+        ]
+        items.append(pending)
+    return sorted(items, key=lambda item: int(item["gap_start"]))
 
 
 async def repair_gap(hass, entry_id: str, gap_start: int) -> dict:
