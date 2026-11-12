@@ -1,8 +1,8 @@
-"""Admin-only read-only data for the PalPulse sidebar control centre.
+"""Admin-only PalPulse sidebar diagnostics and guarded controls.
 
-The panel exposes the existing migration journals and importer diagnostics.
-It does not introduce new history writes, tariff edits or migration shortcuts.
-All modifications still go through Home Assistant's native guarded flows.
+Meter and cost snapshots stay read-only. Explicit historical gap repairs are
+backup-first, journalled and verified through supported Recorder APIs.
+Migrations remain in their existing guarded Home Assistant flows.
 """
 
 from __future__ import annotations
