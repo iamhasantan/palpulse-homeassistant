@@ -122,6 +122,42 @@ class CostTests(unittest.TestCase):
         self.assertAlmostEqual(used["2026-11-09"], 18)
         self.assertEqual(dates, frozenset({"2026-11-09"}))
 
+    def test_invalid_capped_free_excess_can_price_existing_paid_only_hour(self):
+        """An unknown free-window overage price must not erase off-peak costs."""
+        tz = ZoneInfo("Australia/Melbourne")
+        o = options()
+        o[CONF_WEEKDAY_FREE] = "11:00-16:00"
+        o[CONF_WEEKEND_FREE] = "11:00-16:00"
+        o[CONF_WEEKDAY_PEAK] = ""
+        o[CONF_WEEKDAY_SHOULDER] = ""
+        o[CONF_OFFPEAK_CENTS] = 20.24
+        o[CONF_FREE_CAP_KWH] = 15
+        o[CONF_FREE_EXCESS_CENTS] = 0  # legacy invalid snapshot
+        with self.assertRaisesRegex(ValueError, "positive excess rate"):
+            pricing.validate_pricing(o)
+
+        amount, dates, _ = price_verified_hour(
+            hour_at(datetime(2026, 11, 11, 9, tzinfo=tz), pulses=60),
+            3600, o, "Australia/Melbourne",
+        )
+        self.assertAlmostEqual(amount, 0.2024)
+        fee, charged = supply_charge_for_dates(
+            dates, "2026-11-11", o, require_excess_rate=False,
+        )
+        self.assertEqual((fee, charged), (0.0, "2026-11-11"))
+
+        # A sample inside the capped-free period is still strictly rejected.
+        with self.assertRaisesRegex(ValueError, "positive excess rate"):
+            price_verified_hour(
+                hour_at(datetime(2026, 11, 11, 12, tzinfo=tz)),
+                3600, o, "Australia/Melbourne",
+            )
+        with self.assertRaisesRegex(ValueError, "free window"):
+            pricing.price_for_datetime(
+                o, datetime(2026, 11, 11, 12, tzinfo=tz),
+                require_excess_rate=False,
+            )
+
     def test_free_cap_resets_on_next_local_day(self):
         o = options()
         o[CONF_WEEKEND_FREE] = "11:00-16:00"
