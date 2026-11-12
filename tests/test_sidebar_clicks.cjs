@@ -129,6 +129,20 @@ const fakeHass = {
     if (message.type === "palpulse/save_settings") {
       return { saved: true, message: "Settings saved", settings_revision: "version-two" };
     }
+    if (message.type === "palpulse/cost_reconcile_preview") {
+      return { ok: true, plan: {
+        digest: "c".repeat(64), verified_hours: 4, retained_hours: 0,
+        missing_energy_hours: 0, last_sum: 12.34,
+        free_uncertain_dates: [], issues: [],
+        day_totals: [{ day: "2026-11-09", recorded: 2.65,
+                       recomputed: 10.34, verified_hours: 24,
+                       retained_hours: 0, missing_hours: 0 }],
+      }};
+    }
+    if (message.type === "palpulse/cost_reconcile_apply") {
+      return { applied: true, changed_hours: 4,
+               message: "Cost rows verified and checkpoint updated." };
+    }
     if (message.type === "palpulse/replay_checkpoint") {
       return { accepted: true, message: "Replay request received" };
     }
@@ -163,6 +177,7 @@ async function click(fields) {
     ["overview", "Recent energy"],
     ["electricity", "Electricity tariff settings"],
     ["history", "Recorded hourly history"],
+    ["reconcile", "Historical cost reconciliation"],
     ["checkpoint", "ESP32 checkpoint"],
     ["settings", "Connections and dashboard"],
     ["migration", "Electricity usage"],
@@ -189,6 +204,23 @@ async function click(fields) {
   assert.equal(save.changes.free_excess_cents_per_kwh, "19.75");
   assert.ok(effects.navigate.length === 0, "saving must stay inside sidebar");
   panel.shadowRoot.fields = [];
+
+  // Historical reconciliation is explicitly previewed in the sidebar,
+  // and Apply sends the precise verified digest with confirmation.
+  await click({ tab: "reconcile" });
+  await click({ "cost-preview": "" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("recorded versus recomputed costs"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("2026-11-09"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("10.34"));
+  await click({ "cost-apply": "" });
+  const previewCall = effects.webSocket.find(x => x.type === "palpulse/cost_reconcile_preview");
+  const applyCall = effects.webSocket.find(x => x.type === "palpulse/cost_reconcile_apply");
+  assert.equal(previewCall.entry_id, "meter-one");
+  assert.equal(applyCall.entry_id, "meter-one");
+  assert.equal(applyCall.digest, "c".repeat(64));
+  assert.equal(applyCall.expected_revision, "version-one");
+  assert.equal(applyCall.confirm, true);
+  assert.ok(effects.confirms.some(x => x.includes("Recorder-inclusive backup")));
 
   await click({ linkcost: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));
