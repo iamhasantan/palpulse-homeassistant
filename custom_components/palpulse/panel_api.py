@@ -28,6 +28,7 @@ PANEL_WS_TYPE = "palpulse/panel_info"
 REPLAY_WS_TYPE = "palpulse/replay_checkpoint"
 SAVE_WS_TYPE = "palpulse/save_settings"
 LINK_COST_WS_TYPE = "palpulse/link_verified_cost"
+REPAIR_GAP_WS_TYPE = "palpulse/repair_gap"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
 REPLAY_COOLDOWN_SECONDS = 300
 
@@ -179,6 +180,14 @@ async def ws_panel_info(hass, connection, msg) -> None:
             enabled = False
             reason = "Matching ESPHome replay action not installed. Check firmware and ACK action setup."
         item["checkpoint"] = checkpoint
+        try:
+            from .gap_repair_runtime import preview_gaps
+            item["energy_gap_previews"] = await preview_gaps(hass, importer)
+            item["energy_gap_scan_error"] = None
+        except Exception as err:
+            _LOGGER.warning("PalPulse historical gap preview unavailable: %s", err)
+            item["energy_gap_previews"] = []
+            item["energy_gap_scan_error"] = type(err).__name__
         item["replay_service"] = action
         item["replay_available"] = enabled
         item["replay_guidance"] = reason
@@ -393,6 +402,45 @@ async def ws_link_verified_cost(hass, connection, msg) -> None:
         "status": result.status, "message": result.guidance,
     })
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): REPAIR_GAP_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("gap_start"): int,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_repair_historical_gap(hass, connection, msg) -> None:
+    """Repair only one exact skipped UTC hour after a verified HA backup."""
+    requested = msg["gap_start"]
+    if not msg["confirm"] or requested <= 0 or requested % 3600:
+        connection.send_result(msg["id"], {
+            "repaired": False,
+            "message": "Explicit confirmation and a UTC-aligned hour are required.",
+        })
+        return
+    if not any(
+        e.entry_id == msg["entry_id"]
+        for e in hass.config_entries.async_entries(DOMAIN)
+    ):
+        connection.send_result(msg["id"], {
+            "repaired": False, "message": "The selected meter is unavailable.",
+        })
+        return
+    try:
+        from .gap_repair_runtime import repair_gap
+        result = await repair_gap(hass, msg["entry_id"], requested)
+    except Exception as err:
+        _LOGGER.exception("PalPulse historical energy gap repair refused/failed")
+        connection.send_result(msg["id"], {
+            "repaired": False,
+            "message": f"{type(err).__name__}: {err}"[:500],
+        })
+        return
+    connection.send_result(msg["id"], result)
+
+
 def async_register_panel_api(hass) -> None:
     """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
@@ -402,4 +450,5 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_replay_checkpoint)
     websocket_api.async_register_command(hass, ws_save_settings)
     websocket_api.async_register_command(hass, ws_link_verified_cost)
+    websocket_api.async_register_command(hass, ws_repair_historical_gap)
     hass.data[key] = True
