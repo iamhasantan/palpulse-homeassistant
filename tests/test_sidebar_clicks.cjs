@@ -28,6 +28,7 @@ class FakeHTMLElement {
       addEventListener(name, handler) {
         this.listeners.set(name, handler);
       },
+      querySelectorAll(selector) { return selector === "[data-setting]" ? (this.fields || []) : []; },
     };
     this.shadowRoot = root;
     return root;
@@ -96,6 +97,8 @@ const state = {
     energy: { status: "Active", last_completed_utc_hour: 1794420000 },
     cost: { status: "Active", last_costed_hour: 1794420000 },
     pricing: { pricing_mode: "custom_time_of_use" },
+    settings_revision: "version-one",
+    settings: { pricing_mode: "custom_time_of_use", peak_cents_per_kwh: 35, offpeak_cents_per_kwh: 20, daily_supply_cents: 118, daily_free_cap_kwh: 15, free_excess_cents_per_kwh: 25 },
     migration: { stage: "completed" },
     cost_migration: { stage: "completed" },
     statistics: { energy, cost },
@@ -119,6 +122,12 @@ const fakeHass = {
     effects.webSocket.push(message);
     if (message.type === "palpulse/panel_info") {
       return state;
+    }
+    if (message.type === "palpulse/link_verified_cost") {
+      return { linked: true, message: "PalPulse cost statistic linked" };
+    }
+    if (message.type === "palpulse/save_settings") {
+      return { saved: true, message: "Settings saved", settings_revision: "version-two" };
     }
     if (message.type === "palpulse/replay_checkpoint") {
       return { accepted: true, message: "Replay request received" };
@@ -149,12 +158,13 @@ async function click(fields) {
   // racing the explicit button-path assertions.
   panel._hass = fakeHass;
 
-  // All six tabs share the same delegated click handler.
+  // All seven tabs share the same delegated click handler.
   const sections = [
     ["overview", "Recent energy"],
-    ["electricity", "Tariff"],
+    ["electricity", "Electricity tariff settings"],
     ["history", "Recorded hourly history"],
     ["checkpoint", "ESP32 checkpoint"],
+    ["settings", "Connections and dashboard"],
     ["migration", "Electricity usage"],
     ["backups", "Home Assistant backup"],
   ];
@@ -164,6 +174,24 @@ async function click(fields) {
     assert.ok(panel.shadowRoot.innerHTML.includes(heading), tab + " did not render");
   }
 
+  // Inline editing must submit to the guarded WebSocket endpoint,
+  // rather than navigating away or silently altering source state.
+  await click({ tab: "electricity" });
+  assert.ok(panel.shadowRoot.innerHTML.includes('data-setting="free_excess_cents_per_kwh"'));
+  panel.shadowRoot.fields = [{
+    dataset: { setting: "free_excess_cents_per_kwh" },
+    type: "number", value: "19.75",
+  }];
+  await click({ "settings-save": "" });
+  const save = effects.webSocket.find(x => x.type === "palpulse/save_settings");
+  assert.equal(save.entry_id, "meter-one");
+  assert.equal(save.expected_revision, "version-one");
+  assert.equal(save.changes.free_excess_cents_per_kwh, "19.75");
+  assert.ok(effects.navigate.length === 0, "saving must stay inside sidebar");
+  panel.shadowRoot.fields = [];
+
+  await click({ linkcost: "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));
   await click({ refresh: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/panel_info"));
 
@@ -196,7 +224,7 @@ async function click(fields) {
   assert.equal(effects.webSocket.length, before);
 
   panel.disconnectedCallback();
-  console.log("PalPulse sidebar button paths passed: tabs, refresh, links, CSV, backup and replay.");
+  console.log("PalPulse sidebar button paths passed: tabs, settings save, refresh, links, CSV, backup and replay.");
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
