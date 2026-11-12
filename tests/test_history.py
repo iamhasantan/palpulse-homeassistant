@@ -72,6 +72,25 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(hour.missing_minutes, 1)
         self.assertEqual(hour.consumption_pulses, 600)
 
+    def test_many_missing_minutes_are_exact_from_saved_endpoints(self):
+        start = 1793728800
+        records = hour_records(start)
+        for minute in range(1, 59):
+            del records[start + minute * 60]
+        recovered = counter_verified_sparse_hour(records, start)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.missing_minutes, 58)
+        self.assertEqual(recovered.consumption_pulses, 600)
+
+    def test_sparse_hour_rejects_unanchored_or_backward_counter(self):
+        start = 1793728800
+        records = hour_records(start)
+        for minute in range(1, 59):
+            del records[start + minute * 60]
+        last = start + 59 * 60
+        records[last] = Record(last, 10, 40005, 3200)
+        self.assertIsNone(counter_verified_sparse_hour(records, start))
+
     def test_sparse_hour_rejects_missing_endpoint_or_corrupt_counter(self):
         start = 1793728800
         records = hour_records(start)
