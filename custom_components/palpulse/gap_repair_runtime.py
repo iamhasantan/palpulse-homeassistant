@@ -167,15 +167,17 @@ async def repair_gap(hass, entry_id: str, gap_start: int) -> dict:
         # Future live energy imports use the last Recorder row as their sum
         # anchor. The pulse baseline stays unchanged; only its accounted sum
         # offset is now higher by the exact restored kWh amount.
-        importer._sum_offset += float(plan["missing_kwh"])
-        importer._gap_count = max(0, importer._gap_count - 1)
-        await importer._store.async_save(importer._snapshot())
+        if gap_start not in importer._repaired_gap_hours:
+            importer._sum_offset += float(plan["missing_kwh"])
+            importer._gap_count = max(0, importer._gap_count - 1)
+            importer._repaired_gap_hours.add(gap_start)
+            importer._status_message = (
+                f"Restored exact historical UTC hour {gap_start} from "
+                "Recorder counter evidence; tariff cost unchanged"
+            )
+            await importer._store.async_save(importer._snapshot())
         existing["status"] = "complete"
         await store.async_save(existing)
-        importer._status_message = (
-            f"Restored exact historical UTC hour {gap_start} from "
-            "Recorder counter evidence; tariff cost unchanged"
-        )
         importer._notify_health()
         return {
             "repaired": True,
