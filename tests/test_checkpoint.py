@@ -34,7 +34,7 @@ def event(**updates):
 
 class ESPCheckpointTests(unittest.TestCase):
     def test_valid_meter_checkpoint_can_offer_non_destructive_replay(self):
-        r = cp.parse_checkpoint_event(event(), MAC, now=NOW)
+        r = cp.parse_checkpoint_event(event(queue_size="0"), MAC, now=NOW)
         self.assertIsNotNone(r)
         self.assertEqual(r["ack_timestamp"], NOW - 360)
         self.assertEqual(r["total_pulses"], 120000)
@@ -64,6 +64,11 @@ class ESPCheckpointTests(unittest.TestCase):
                 r = cp.parse_checkpoint_event(data, MAC, now=NOW)
                 self.assertIsNotNone(r)
                 self.assertFalse(cp.replay_eligible(r, NOW)[0])
+
+    def test_replay_waits_for_queue_acks_before_requesting_another_batch(self):
+        r = cp.parse_checkpoint_event(event(queue_size="3"), MAC, now=NOW)
+        self.assertFalse(cp.replay_eligible(r, NOW)[0])
+        self.assertIn("queued", cp.replay_eligible(r, NOW)[1])
 
     def test_only_matching_esp_home_replay_action_is_permitted(self):
         valid = "esphome.powerpal_proxy_palpulse_ack_1a2b3c4d"

@@ -86,6 +86,8 @@ def replay_eligible(report: dict | None, now: int) -> tuple[bool, str]:
         report["buffer_oldest"] > report["ack_timestamp"] + 60
     ):
         return False, "Powerpal buffer has rolled past the acknowledged cursor."
+    if report["queue_size"] != 0:
+        return False, "ESP32 has unacknowledged records queued; allow ACK delivery to finish."
     return True, "Ready to ask ESPHome to re-read buffered measurements."
 
 

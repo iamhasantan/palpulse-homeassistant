@@ -75,6 +75,51 @@ def register_checkpoint_listener(hass, entry) -> None:
         )
         if snapshot is not None:
             store[entry.entry_id] = snapshot
+            # The firmware reports ACK progress once per minute. Request a
+            # normal replay only when its saved meter counter is ahead of its
+            # acknowledged cursor, the outgoing queue is empty and every
+            # durability/buffer guard passes. This never changes an NVS
+            # checkpoint or writes a Recorder statistic.
+            if snapshot["ack_timestamp"] >= snapshot["checkpoint_timestamp"]:
+                return
+            eligible, _ = replay_eligible(snapshot, int(time.time()))
+            if not eligible:
+                return
+            entry_id = entry.entry_id
+            importer = hass.data.get(DOMAIN, {}).get(entry_id)
+            if importer is None or importer.health["status"] == "Halted":
+                return
+            manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry_id)
+            cost_manager = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry_id)
+            if (
+                (manager is not None and manager.busy)
+                or (cost_manager is not None and cost_manager.busy)
+            ):
+                return
+            action = derive_replay_service(
+                str(entry.options.get(CONF_ACK_SERVICE) or "")
+            )
+            if not action or not hass.services.has_service(*action.split(".", 1)):
+                return
+            attempts = hass.data.setdefault(f"{DOMAIN}_replay_request", {})
+            now = time.monotonic()
+            if now - attempts.get(entry_id, 0) < REPLAY_COOLDOWN_SECONDS:
+                return
+            attempts[entry_id] = now
+
+            async def request_replay() -> None:
+                domain, service = action.split(".", 1)
+                try:
+                    await hass.services.async_call(
+                        domain, service, {}, blocking=False,
+                    )
+                except Exception:
+                    _LOGGER.exception(
+                        "Automatic buffered history replay failed for %s",
+                        entry_id,
+                    )
+
+            hass.async_create_task(request_replay())
 
     unsub = hass.bus.async_listen(CHECKPOINT_EVENT, on_event)
     entry.async_on_unload(unsub)

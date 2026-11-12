@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components" / "palpulse"))
 
-from history import (Record, complete_hour, counter_verified_sparse_hour, hourly_statistic, normalize_mac, parse_event)  # noqa: E402
+from history import (Record, complete_hour, counter_verified_sparse_hour, counter_verified_from_previous, hourly_statistic, normalize_mac, parse_event)  # noqa: E402
 
 
 def hour_records(hour: int, *, phase: int = 0, base: int = 40000,
@@ -71,6 +71,50 @@ class HistoryTests(unittest.TestCase):
         self.assertIsNotNone(hour)
         self.assertEqual(hour.missing_minutes, 1)
         self.assertEqual(hour.consumption_pulses, 600)
+
+    def test_many_missing_minutes_are_exact_from_saved_endpoints(self):
+        start = 1793728800
+        records = hour_records(start)
+        for minute in range(1, 59):
+            del records[start + minute * 60]
+        recovered = counter_verified_sparse_hour(records, start)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.missing_minutes, 58)
+        self.assertEqual(recovered.consumption_pulses, 600)
+
+    def test_sparse_hour_rejects_unanchored_or_backward_counter(self):
+        start = 1793728800
+        records = hour_records(start)
+        for minute in range(1, 59):
+            del records[start + minute * 60]
+        last = start + 59 * 60
+        records[last] = Record(last, 10, 40005, 3200)
+        self.assertIsNone(counter_verified_sparse_hour(records, start))
+
+    def test_missing_first_minute_uses_previous_durable_counter(self):
+        start = 1793728800
+        records = hour_records(start)
+        del records[start]
+        recovered = counter_verified_from_previous(
+            records, start, start - 60, 40000,
+        )
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.missing_minutes, 1)
+        self.assertEqual(recovered.consumption_pulses, 600)
+        self.assertIsNone(counter_verified_from_previous(
+            records, start, start - 120, 40000,
+        ))
+
+    def test_only_last_record_and_previous_anchor_proves_exact_hour(self):
+        start = 1793728800
+        records = hour_records(start)
+        for minute in range(59):
+            del records[start + minute * 60]
+        recovered = counter_verified_from_previous(
+            records, start, start - 60, 40000,
+        )
+        self.assertEqual(recovered.missing_minutes, 59)
+        self.assertEqual(recovered.consumption_pulses, 600)
 
     def test_sparse_hour_rejects_missing_endpoint_or_corrupt_counter(self):
         start = 1793728800

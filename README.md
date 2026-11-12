@@ -2,7 +2,7 @@
 
 Local electricity monitoring for **Powerpal** meters using an ESP32 and Home Assistant. PalPulse brings live readings, timestamped energy history and optional electricity-cost tracking into Home Assistant without a cloud account.
 
-> **Early preview: 0.2b7.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+> **Early preview: 0.2b8.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
 
 ## What it does
 
@@ -19,7 +19,7 @@ PalPulse keeps its historical energy statistic separate from your existing live 
 You'll need Home Assistant **2026.11 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
 
 1. Open **Settings → Marketplace → Add from link** and enter `https://github.com/iamhasantan/palpulse-homeassistant`.
-2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.2b7** under Updates, then restart Home Assistant.
+2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.2b8** under Updates, then restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → PalPulse for Home Assistant** and enter your Powerpal BLE MAC address.
 4. Enable history events in the companion ESPHome component. On the ESPHome device in Home Assistant, allow the device to perform Home Assistant actions.
 5. Check **PalPulse live history status** before switching your Energy dashboard to the new statistic.
@@ -46,7 +46,7 @@ backups and ESP32 recovery in one place.
 - **Backups** can request an automatic Home Assistant backup. **Confirm that it
   finished and includes Recorder/history before changing anything.**
 
-Rate editing uses strict server-side validation. A capped free window must have a positive retailer-confirmed excess rate for future configuration, and saved tariff changes start a new profile from a safe hour boundary. Missing power measurements are not reconstructed. The panel is visible to Home Assistant administrators. It handles multiple
+Rate editing uses strict server-side validation. A capped free window must have a positive retailer-confirmed excess rate for future configuration, and saved tariff changes start a new profile from a safe hour boundary. Missing native-minute events are never invented; exact hourly kWh may be restored from independently verified cumulative counters. The panel is visible to Home Assistant administrators. It handles multiple
 Powerpal meters separately and doesn't require a manually imported Lovelace
 dashboard.
 
@@ -57,6 +57,37 @@ but won't provide checkpoint telemetry or the manual replay action. Replaying
 only works while the original minute records remain in the Powerpal's buffer.
 It cannot fill hours that are no longer available or derive missing
 time-of-use charges.
+
+## Automatic best-effort recovery (next experimental preview)
+
+PalPulse retries saved energy hours after a restart and every five minutes, even
+if no new ESPHome events arrive. When original native-minute events are missing
+but the first and last cumulative meter readings survive, it can recover the
+**exact hourly kWh** with up to 58 missing interior minutes, or up to 59 when the previous hour's durable final reading also anchors the interval. A verified hour
+with one constant billing band can also recover the exact tariff cost.
+
+Missing cost entries can also be rebuilt from two adjacent Home Assistant
+Recorder energy hours when their raw meter-state difference agrees with the
+cumulative energy difference. This uses the original timestamp and tariff
+profile, not today's meter usage. Uncommitted legacy jobs with an accidentally
+unset Power5 excess rate can adopt the now-confirmed rate only if the remaining
+plan settings match, including the corrected 4-9pm peak windows. Already
+committed historical cost statistics are never silently rewritten.
+
+With a compatible ESPHome build and a configured native ACK action, a fresh,
+safe firmware checkpoint can automatically request buffered meter-history
+replay. The normal native ACK sequence protects durable Home Assistant storage
+from lost acknowledgments. This **cannot** restore minutes discarded from the
+Powerpal's own buffer, backfill skipped hours whose historical Recorder series
+has since advanced, or prove per-minute allocation when a sparse hour crosses
+tariff bands. Those hours remain explicitly missing/unpriced, rather than zero.
+
+**Red Power5:** Verify your actual invoice/fact sheet. Configure 11:00-16:00
+free (first 15 kWh), the retailer-confirmed excess rate, 16:00-21:00
+evening peak on weekdays and weekends, and off-peak otherwise. Having a
+numeric peak rate without peak windows does *not* activate peak pricing.
+The guided Power5 wizard sets these published windows but does not guess
+your rates.
 
 ## A simpler settings screen
 

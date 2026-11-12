@@ -181,6 +181,31 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             BASE, hass.data["palpulse"][entry.entry_id]._records
         )
 
+    async def test_persisted_measurements_retry_without_a_new_event(self):
+        """A restart must not strand complete buffered energy hours."""
+        start = BASE
+        self.importer._calibration = CAL
+        self.importer._records = {
+            start + minute * 60: palpulse.Record(
+                start + minute * 60, 10, 40000 + (minute + 1) * 10, CAL,
+            )
+            for minute in range(60)
+        }
+        timer = types.ModuleType("homeassistant.helpers.event")
+        periodic = []
+        timer.async_track_time_interval = lambda _hass, callback, _period: (
+            periodic.append(callback) or (lambda: None)
+        )
+        with patch.dict(sys.modules, {"homeassistant.helpers.event": timer}):
+            with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+                await self.importer.async_start()
+                self.assertEqual(self.importer.health["last_completed_utc_hour"], BASE)
+                self.assertEqual(len(RECORDER_IMPORTS), 1)
+                self.assertEqual(len(periodic), 1)
+                await periodic[0](None)
+                self.assertEqual(len(RECORDER_IMPORTS), 1)
+                await self.importer.async_flush()
+
     async def test_hourly_import_and_duplicate(self):
         await self.feed_hour(BASE, 40000)
         self.assertEqual(len(RECORDER_IMPORTS), 1)
@@ -227,8 +252,18 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(RECORDER_IMPORTS[2][1][0]["sum"], 1800 / CAL)
         self.assertEqual(self.importer.health["skipped_hours"], 0)
         self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
-        # Missing minute pricing is not reconstructed from hourly totals.
-        self.assertEqual(costed_hours, [BASE, BASE + 7200])
+        # Counter-verified sparse hours now reach the cost writer, which
+        # independently refuses only mixed/ambiguous tariff intervals.
+        self.assertEqual(costed_hours, [BASE, BASE + 3600, BASE + 7200])
+
+    async def test_missing_first_minute_recovers_with_prior_hour_end(self):
+        await self.feed_hour(BASE, 40000)
+        await self.feed_hour(BASE + 3600, 40600, skip=0)
+        await self.feed_hour(BASE + 7200, 41200)
+        self.assertEqual(len(RECORDER_IMPORTS), 3)
+        self.assertEqual(self.importer.health["skipped_hours"], 0)
+        self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
+        self.assertAlmostEqual(RECORDER_ROWS[BASE + 7200]["sum"], 1800 / CAL)
 
     async def test_replacement_esp32_rebases_once_without_rewriting_old_sum(self):
         await self.feed_hour(BASE, 40000)
@@ -372,16 +407,20 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 record_event(BASE + 4 * 3600, 10, 42410)
             )
         self.assertEqual(self.importer._last_hour, BASE + 3 * 3600)
-        self.assertEqual(self.importer.health["skipped_hours"], 1)
-        self.assertEqual(len(RECORDER_IMPORTS), 2)
+        # The previous durable meter endpoint now proves the formerly
+        # skipped hour even though its first minute is missing.
+        self.assertEqual(self.importer.health["skipped_hours"], 0)
+        self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
+        self.assertEqual(len(RECORDER_IMPORTS), 3)
         self.assertAlmostEqual(RECORDER_IMPORTS[0][1][0]["sum"], 1200 / CAL)
         self.assertAlmostEqual(RECORDER_IMPORTS[1][1][0]["sum"], 1800 / CAL)
+        self.assertAlmostEqual(RECORDER_IMPORTS[2][1][0]["sum"], 2400 / CAL)
         # Duplicate replay of an already imported record cannot double count.
         with patch.object(palpulse.time, "time", return_value=BASE + 6 * 3600):
             await self.importer.async_receive(record_event(
                 BASE + 3 * 3600 + 59 * 60, 10, 42400
             ))
-        self.assertEqual(len(RECORDER_IMPORTS), 2)
+        self.assertEqual(len(RECORDER_IMPORTS), 3)
 
     async def test_counter_reset_across_gap_still_halts(self):
         await self.feed_custom_hour(BASE, 40000, now=BASE + 2 * 3600)
