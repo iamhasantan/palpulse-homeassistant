@@ -125,14 +125,15 @@ def price_counter_verified_hour(
 ) -> tuple[float, frozenset[str], dict[str, float]]:
     """Exact cost from sparse native minutes if the *whole* hour has one band.
 
-    First and last native minute counters must already have been verified by
-    counter_verified_sparse_hour. No energy or tariff allocation is estimated.
+    Energy must already be proven by native counter endpoints or by two
+    consecutive Recorder energy statistics whose state and sum deltas agree.
+    No energy or tariff allocation is estimated.
     This works for a full free hour, including a capped allowance, or a
     constant-rate paid hour, but never for a mixed tariff/date interval.
     """
     if not is_cost_enabled(options) or not 0 < calibration <= 1_000_000:
         raise ValueError("Custom pricing and valid calibration are required")
-    if not 1 <= hour.missing_minutes <= 58 or hour.consumption_pulses < 0:
+    if not 1 <= hour.missing_minutes <= 59 or hour.consumption_pulses < 0:
         raise ValueError("Expected a counter-verified sparse native hour")
     validate_pricing(options, require_excess_rate=False)
     zone = ZoneInfo(time_zone)
