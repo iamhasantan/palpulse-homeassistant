@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         from .cost_recorder import PalPulseCostRecorder
         cost_recorder = PalPulseCostRecorder(hass, entry, meter)
         await cost_recorder.async_load()
+        cost_recorder.energy_importer = importer
         importer.cost_recorder = cost_recorder
         hass.data.setdefault(f"{DOMAIN}_cost", {})[entry.entry_id] = cost_recorder
 
@@ -101,6 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.BUTTON, Platform.SENSOR]
     )
+    if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
+        # Retry durable cost jobs independently of new meter events. A quiet
+        # ESP32 must not leave an earlier Recorder failure stuck forever.
+        try:
+            await cost_recorder.async_start()
+        except Exception:
+            _LOGGER.exception("PalPulse cost recovery could not start")
     return True
 
 

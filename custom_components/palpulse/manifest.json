@@ -2,7 +2,8 @@
   "domain": "palpulse",
   "name": "PalPulse for Home Assistant",
   "after_dependencies": [
-    "esphome"
+    "esphome",
+    "energy"
   ],
   "categories": [
     "energy.meters_monitoring"

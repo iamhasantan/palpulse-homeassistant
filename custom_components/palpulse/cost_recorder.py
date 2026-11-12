@@ -9,7 +9,7 @@ durable checkpointing, and duplicate replay is reconciled.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 import time
@@ -26,9 +26,25 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .cost import (free_dates_between, is_cost_enabled, price_verified_hour, supply_charge_for_dates)
-from .pricing import CONF_FREE_CAP_KWH
+from .pricing import (
+    CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
+    CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
+    CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS, WINDOW_FIELDS,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_TARIFF_FIELDS = frozenset({
+    CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
+    CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
+    CONF_FREE_CAP_KWH, CONF_FREE_EXCESS_CENTS,
+    *WINDOW_FIELDS,
+})
+
+
+def _tariff_options(options) -> dict:
+    """A non-tariff setting must not falsely create a pricing transition."""
+    return {k: options[k] for k in _TARIFF_FIELDS if k in options}
 
 
 class UnpriceableHour(ValueError):
@@ -55,9 +71,24 @@ class PalPulseCostRecorder:
         self._transition_hours: set[int] = set()
         self._unpriced_hours: set[int] = set()
         self._lock = asyncio.Lock()
+        self._unsubscribe_retry = None
+        self._last_retry_utc: int | None = None
+        self._retry_count = 0
+        self._energy_cost_link = "unknown"
+        self._energy_cost_guidance = "Checking Home Assistant Energy settings"
+        self.energy_importer = None
 
     @property
     def status(self) -> dict:
+        last_energy = (
+            self.energy_importer.health.get("last_completed_utc_hour")
+            if self.energy_importer is not None else None
+        )
+        lag_hours = (
+            max(0, int((last_energy - self._last_hour) // 3600))
+            if last_energy is not None and self._last_hour is not None
+            else None
+        )
         return {
             "statistic_id": self.statistic_id,
             "last_costed_hour": self._last_hour,
@@ -68,6 +99,11 @@ class PalPulseCostRecorder:
             "pending_cost_hours": len(self._pending),
             "tariff_transition_hours": sorted(self._transition_hours),
             "unpriced_hours": sorted(self._unpriced_hours),
+            "last_retry_utc": self._last_retry_utc,
+            "recovery_attempts": self._retry_count,
+            "energy_dashboard_cost_link": self._energy_cost_link,
+            "energy_dashboard_cost_guidance": self._energy_cost_guidance,
+            "energy_to_cost_lag_hours": lag_hours,
         }
 
     def _snapshot(self) -> dict:
@@ -81,6 +117,9 @@ class PalPulseCostRecorder:
             "tariff_profiles": self._tariff_profiles,
             "tariff_transition_hours": sorted(self._transition_hours),
             "last_error": self._error,
+            "unpriced_hours": sorted(self._unpriced_hours),
+            "last_retry_utc": self._last_retry_utc,
+            "recovery_attempts": self._retry_count,
         }
 
     async def async_load(self) -> None:
@@ -95,12 +134,14 @@ class PalPulseCostRecorder:
         self._tariff_profiles = list(data.get("tariff_profiles", []))
         self._transition_hours = set(int(ts) for ts in data.get("tariff_transition_hours", []))
         self._unpriced_hours = set(int(ts) for ts in data.get("unpriced_hours", []))
-        current = dict(self.entry.options)
+        self._last_retry_utc = data.get("last_retry_utc")
+        self._retry_count = int(data.get("recovery_attempts", 0))
+        current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
             self._tariff_profiles = [{"from": 0, "options": current, "timezone": zone}]
         elif (
-            self._tariff_profiles[-1]["options"] != current
+            _tariff_options(self._tariff_profiles[-1]["options"]) != current
             or self._tariff_profiles[-1]["timezone"] != zone
         ):
             now = int(time.time())
@@ -113,7 +154,64 @@ class PalPulseCostRecorder:
         if not math.isfinite(self._sum):
             raise ValueError("PalPulse cost ledger has an invalid cumulative sum")
 
+    async def async_start(self) -> None:
+        """Recover committed pending hours without waiting for a new meter event."""
+        from homeassistant.helpers.event import async_track_time_interval
+
+        if self._unsubscribe_retry is None:
+            self._unsubscribe_retry = async_track_time_interval(
+                self.hass, self._periodic_retry, timedelta(minutes=5),
+            )
+        await self.async_recover_pending()
+        await self.async_refresh_cost_link()
+
+    async def async_refresh_cost_link(self) -> None:
+        """Diagnose a missing Energy dashboard cost mapping, never change it."""
+        try:
+            from .dashboard_cost import async_check_cost_link, async_link_verified_cost
+            from .const import CONF_AUTO_LINK_ENERGY_COST
+
+            energy_id = f"{DOMAIN}:powerpal_{self.mac}_energy"
+            result = await async_check_cost_link(
+                self.hass, energy_id, self.statistic_id,
+            )
+            if (
+                result.status == "unlinked"
+                and self.entry.options.get(CONF_AUTO_LINK_ENERGY_COST, False)
+            ):
+                result = await async_link_verified_cost(
+                    self.hass, energy_id, self.statistic_id, self,
+                )
+            self._energy_cost_link = result.status
+            self._energy_cost_guidance = result.guidance
+        except Exception as err:
+            self._energy_cost_link = "unavailable"
+            self._energy_cost_guidance = (
+                "Cannot read Energy dashboard configuration: "
+                f"{type(err).__name__}"
+            )
+
+    async def _periodic_retry(self, _now) -> None:
+        """A failed Recorder write is retried even after an ESP32/HA outage."""
+        await self.async_recover_pending()
+        await self.async_refresh_cost_link()
+
+    async def async_recover_pending(self) -> None:
+        """Idempotent, independently scheduled recovery from the durable journal."""
+        if not self._pending or not is_cost_enabled(self.entry.options):
+            return
+        async with self._lock:
+            if not self._pending:
+                return
+            self._last_retry_utc = int(time.time())
+            self._retry_count += 1
+            await self._store.async_save(self._snapshot())
+            await self._drain_pending()
+
     async def async_flush(self) -> None:
+        if self._unsubscribe_retry is not None:
+            self._unsubscribe_retry()
+            self._unsubscribe_retry = None
         async with self._lock:
             await self._store.async_save(self._snapshot())
 
@@ -218,6 +316,15 @@ class PalPulseCostRecorder:
     ) -> None:
         start = hour.hour_start
         if self._last_hour is not None and start <= self._last_hour:
+            # An old pending entry can survive a crash after a Store save.
+            # Remove it only if its corresponding Recorder hour still exists.
+            # Otherwise stop and retain the durable recovery job.
+            present = await self._read(start, start + 3600)
+            if len(present) != 1 or int(present[0]["start"]) != start:
+                raise ValueError(
+                    "Previously costed Recorder hour is missing; pending job "
+                    "retained for review rather than silently discarded"
+                )
             return
         # A previous Recorder write may have succeeded just before HA crashed
         # while its Store checkpoint failed. Never skip over those committed

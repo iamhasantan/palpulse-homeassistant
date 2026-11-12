@@ -261,9 +261,25 @@ class CostImportStatusSensor(SensorEntity):
     @property
     def native_value(self):
         state = self._recorder.status
-        return "Error" if state["last_error"] else (
-            "Active" if state["last_costed_hour"] else "Waiting"
-        )
+        if state["last_error"]:
+            return "Needs attention"
+        if state.get("pending_cost_hours"):
+            return "Recovering"
+        if state.get("energy_dashboard_cost_link") == "unlinked":
+            return "Dashboard cost not linked"
+        if state["last_costed_hour"] is None:
+            return "Waiting"
+        # Use the current verified energy cursor to spot an actual cost lag,
+        # not just the age of a single older cost row.
+        lag = state.get("energy_to_cost_lag_hours")
+        if lag is not None and lag >= 2:
+            return "Cost history delayed"
+        if state.get("unpriced_hours"):
+            return "Active with missing costs"
+        import time
+        if int(time.time()) - int(state["last_costed_hour"]) > 4 * 3600:
+            return "Cost history delayed"
+        return "Active"
 
     @property
     def extra_state_attributes(self):
