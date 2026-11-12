@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.3b1
+
+### What's Changed
+
+- **Requires Home Assistant 2026.11.1.** The Marketplace minimum is raised, and manual installations of older Core versions are rejected when Core reports its version.
+- **Retailer-effective tariff dates.** Specify when a rate plan actually started in the sidebar Electricity tab. Versioned profiles preserve earlier effective dates, in the Home Assistant billing timezone. Saving a backdated profile NEVER automatically rewrites historical Recorder statistics.
+- **Repair 9–12 November costs.** The new Cost reconciliation tab defaults to the last four local billing days and accepts a bounded 14-day range. Preview the existing monetary charges, proposed recomputed charges and difference per day, based on the saved effective tariff and actual Recorder hourly energy. Peak pricing begins at the configured 16:00 and free power is allocated across the whole local date up to the 15 kWh cap.
+- **Best effort without fabricated readings.** Reconstruct known fixed-rate hours from genuine cumulative energy statistics even when the minute-level transport missed events. Leave unknown free-cap allocation or genuinely missing energy explicitly flagged and retain existing unverified charges instead of silently inventing a price.
+- **Protected corrections.** Only after the administrator reviews a digest-matched preview and confirms does PalPulse create and verify a Home Assistant Recorder-inclusive backup. A durable journal and per-batch read-after-write checks then update its own cost statistic's cumulative *state and sum*, followed by the live cost checkpoint. Interrupted writes are resumable without doubling a charge. Active migrations, unsafe conflicts and pending cost jobs block writes.
+- **Historical energy gap recovery.** Include the separate backup-first, journalled repair for isolated previously skipped energy hours from PR #41. This only offers exact single-hour gap recovery where adjacent physical meter counters prove the omission. Multi-hour or otherwise ambiguous gaps remain unmodified.
+- **Regression tests.** Added tariff version, Nov 9 4pm peak / 11am–4pm free cap, prior underbilling, dashboard click path, backup, changed-source refusal and simulated crash-resume tests.
+
+### Experimental preview and limitations
+
+Back up Home Assistant (including Recorder history) before installing. Verify the actual contract start date and Red Energy charges before reconciling. The dashboard preview does not alter Recorder. A confirmation performs an additional verified backup. Cost corrections are not retailer billing statements; uncertain free-cap allocations and genuinely missing energy cannot become exact without further evidence. Existing backup-first historical Import / Resume / Undo flows are unchanged. Real Home Assistant 2026.11.1 browser, ESP32 and physical Recorder acceptance testing remains required.
+
+
 ## 0.2b8
 
 ### What's Changed
