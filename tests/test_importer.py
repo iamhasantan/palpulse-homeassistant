@@ -227,8 +227,9 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(RECORDER_IMPORTS[2][1][0]["sum"], 1800 / CAL)
         self.assertEqual(self.importer.health["skipped_hours"], 0)
         self.assertEqual(self.importer.health["sparse_recovered_hours"], 1)
-        # Missing minute pricing is not reconstructed from hourly totals.
-        self.assertEqual(costed_hours, [BASE, BASE + 7200])
+        # Counter-verified sparse hours now reach the cost writer, which
+        # independently refuses only mixed/ambiguous tariff intervals.
+        self.assertEqual(costed_hours, [BASE, BASE + 3600, BASE + 7200])
 
     async def test_replacement_esp32_rebases_once_without_rewriting_old_sum(self):
         await self.feed_hour(BASE, 40000)
