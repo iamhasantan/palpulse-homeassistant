@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.3b2
+
+### What's Changed
+
+- **Cost reconciliation handles signed historical baselines.** An earlier finite negative cumulative monetary sum is preserved as a valid signed starting offset. The 0.3b1 preview incorrectly rejected these with `No valid earlier monetary baseline`. An invalid or corrupt earlier row now yields a read-only preview with an explicit warning and blocks any Recorder correction.
+- **Show exactly where ESPHome history stops flowing.** The native PalPulse dashboard independently counts actual `esphome.palpulse_record` and `esphome.palpulse_checkpoint` events received per Powerpal meter, displays the last event and valid checkpoint timestamp, and shows rejected checkpoint telemetry. Counters start afresh on integration reload.
+- **Firmware BLE link visibility.** Accept optional `ble_connected` status from PalPulse ESPHome 0.2b4 and prevent replay while the Powerpal BLE link is disconnected. Earlier firmware events without that flag remain compatible.
+- **Always subscribe to checkpoint events.** Listen on the Home Assistant event bus regardless of whether the optional sidebar HTTP component is available. This prevents the panel lifecycle from suppressing real meter telemetry.
+- **Regression coverage.** New signed monetary baseline, corrupt-baseline no-write, and legacy/new ESPHome checkpoint tests.
+
+### Experimental preview
+
+Requires Home Assistant **2026.11.1**. Recommended ESPHome **0.2b4** with `history_events: true` and `api.homeassistant_services: true` to emit a checkpoint heartbeat even during temporary meter BLE disconnections. Also enable **Allow the device to perform Home Assistant actions** for ESPHome. Buffered ACK and replay need `reliable_history: true`, `api.custom_services: true` and the actual unique ACK action. Preserve ESP32 NVS, and back up Home Assistant including Recorder before upgrading. The cost reconciliation preview never modifies Recorder; actual corrections remain independently confirmed and backup-first. Real hardware acceptance remains outstanding.
+
+
 ## 0.3b1
 
 ### What's Changed
