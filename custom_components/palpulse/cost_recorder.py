@@ -303,7 +303,9 @@ class PalPulseCostRecorder:
                     or free_window_active(options, local)
                 ):
                     raise ValueError("Unjournalled hour includes free or mixed billing dates")
-                price = price_for_datetime(options, local)
+                price = price_for_datetime(
+                    options, local, require_excess_rate=False,
+                )
                 if price is None or not math.isfinite(price) or price <= 0:
                     raise ValueError("Unjournalled hour has no verifiable paid rate")
                 if rate is not None and abs(rate - price) > 1e-12:
@@ -530,8 +532,17 @@ class PalPulseCostRecorder:
             samples, calibration, options, time_zone,
             self._free_used,
         )
+        requires_excess = any(
+            free_window_active(
+                options, datetime.fromtimestamp(
+                    record.timestamp, timezone.utc
+                ).astimezone(local_zone),
+            )
+            for record in samples
+        )
         supply, charged_date = supply_charge_for_dates(
-            dates, self._last_supply_date, options
+            dates, self._last_supply_date, options,
+            require_excess_rate=requires_excess,
         )
         next_sum = round(self._sum + usage + supply, 9)
 

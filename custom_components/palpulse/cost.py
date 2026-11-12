@@ -62,7 +62,6 @@ def price_verified_hour(
     local day, INCLUDING units billed after the cap is reached. This is tracked
     per-date to avoid a new free allowance for each separate UTC hour.
     """
-    validate_pricing(options)
     if not is_cost_enabled(options):
         raise ValueError("Custom pricing has not been enabled")
     if not 0 < calibration <= 1_000_000:
@@ -74,6 +73,16 @@ def price_verified_hour(
     if any(item.timestamp != first + i * 60 for i, item in enumerate(records)):
         raise ValueError("Missing or irregular native-minute samples")
     zone = ZoneInfo(time_zone)
+    requires_excess = any(
+        free_window_active(
+            options, datetime.fromtimestamp(r.timestamp, timezone.utc).astimezone(zone),
+        )
+        for r in records
+    )
+    # A legacy capped-free plan with an unfilled excess rate cannot price
+    # *free-window* consumption. Its independently verifiable paid-only hours
+    # must not be blocked by a tariff field that they never use.
+    validate_pricing(options, require_excess_rate=requires_excess)
     used_by_date = {
         str(key): Decimal(str(value))
         for key, value in (previous_free_kwh or {}).items()
@@ -97,7 +106,7 @@ def price_verified_hour(
             # cap == 0 means an unlimited free interval.
             used_by_date[date_key] = prior + kwh
         else:
-            rate = price_for_datetime(options, local)
+            rate = price_for_datetime(options, local, require_excess_rate=requires_excess)
             if rate is None:
                 raise ValueError("Current tariff rate unavailable")
             total += kwh * Decimal(str(rate))
@@ -119,7 +128,7 @@ def cost_for_verified_hour(
 
 def supply_charge_for_dates(
     observed_dates: frozenset[str], latest_charged_date: str | None,
-    options: Mapping[str, object],
+    options: Mapping[str, object], *, require_excess_rate: bool = True,
 ) -> tuple[float, str | None]:
     """Add a daily fee once per local calendar day, including DST transitions.
 
@@ -132,7 +141,7 @@ def supply_charge_for_dates(
                     if latest_charged_date is None or date > latest_charged_date)
     if not unseen:
         return 0.0, latest_charged_date
-    fee = daily_supply_dollars(options)
+    fee = daily_supply_dollars(options, require_excess_rate=require_excess_rate)
     if fee is None:
         raise ValueError("Custom tariff not active")
     return round(fee * len(unseen), 9), unseen[-1]
