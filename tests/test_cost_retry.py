@@ -30,6 +30,7 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         base.FakeStore.VALUES.clear()
         self.rows = {}
+        self.energy_rows = {}
         self.hass = types.SimpleNamespace(
             config=types.SimpleNamespace(time_zone="Australia/Melbourne"),
             async_add_executor_job=lambda callback: asyncio.to_thread(callback),
@@ -42,11 +43,13 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.recorder = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
 
         def read(hass, start, end, ids, period, units, fields):
+            stat_id = next(iter(ids))
+            recorded = self.energy_rows if stat_id.endswith("_energy") else self.rows
             result = [
-                dict(row) for stamp, row in sorted(self.rows.items())
+                dict(row) for stamp, row in sorted(recorded.items())
                 if start.timestamp() <= stamp < end.timestamp()
             ]
-            return {next(iter(ids)): result}
+            return {stat_id: result}
 
         def write(hass, metadata, entries):
             for row in entries:
@@ -128,6 +131,98 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         await self.recorder.async_recover_pending()
         self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
         self.assertIn("missing", self.recorder.status["last_error"].lower())
+
+    async def test_matching_recorded_paid_cost_hour_self_heals_checkpoint(self):
+        """The user's orphaned 9 am cost row must be adopted without rewriting."""
+        # Same accounting as the real 11 Nov 9 am case: 0.633125 kWh at
+        # 20.24 cents/kWh yields an existing incremental A$0.1281445.
+        start = BASE
+        self.entry.options["flat_cents_per_kwh"] = 20.24
+        # Recreate tariff journal only for this test instance.
+        base.FakeStore.VALUES.clear()
+        self.recorder = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await self.recorder.async_load()
+        first, samples = build_hour(start, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        initial_sum = self.rows[start]["sum"]
+        orphan = start + 3600
+        later = start + 7200
+        first_energy = 100.0
+        delta = 0.633125
+        self.energy_rows = {
+            start: {"start": start, "state": first_energy, "sum": first_energy},
+            orphan: {"start": orphan, "state": first_energy + delta,
+                     "sum": first_energy + delta},
+        }
+        orphan_sum = round(initial_sum + delta * 0.2024, 9)
+        self.rows[orphan] = {
+            "start": orphan, "state": orphan_sum, "sum": orphan_sum,
+        }
+        original_orphan = dict(self.rows[orphan])
+        next_hour, next_samples = build_hour(later, 41200)
+        await self.recorder.async_import_verified_hour(
+            next_hour, next_samples, base.CAL,
+        )
+        status = self.recorder.status
+        self.assertEqual(status["pending_cost_hours"], 0)
+        self.assertIsNone(status["last_error"])
+        self.assertEqual(status["reconciled_cost_hours"], 1)
+        self.assertEqual(status["last_reconciled_utc_hour"], orphan)
+        self.assertIsNone(status["recorder_conflict"])
+        self.assertEqual(self.rows[orphan], original_orphan)
+        self.assertIn(later, self.rows)
+
+        # A restart must preserve the adopted cursor and never double count.
+        restored = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await restored.async_load()
+        self.assertEqual(restored.status["reconciled_cost_hours"], 1)
+        self.assertEqual(restored.status["last_costed_hour"], later)
+        self.assertAlmostEqual(
+            restored.status["cumulative_cost"], self.rows[later]["sum"],
+        )
+
+    async def test_orphan_cost_row_without_matching_energy_stays_blocked(self):
+        first, samples = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        orphan = BASE + 3600
+        amount = self.rows[BASE]["sum"] + 0.0375
+        self.rows[orphan] = {
+            "start": orphan, "state": amount, "sum": amount,
+        }
+        # Without both independently recorded energy states and sums, even
+        # a plausible cost is not sufficient proof for adopting an orphan.
+        later, later_samples = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_samples, base.CAL,
+        )
+        status = self.recorder.status
+        self.assertEqual(status["pending_cost_hours"], 1)
+        self.assertEqual(status["reconciled_cost_hours"], 0)
+        self.assertEqual(status["last_costed_hour"], BASE)
+        self.assertIn("energy hours are missing", status["last_error"])
+        self.assertNotIn(BASE + 7200, self.rows)
+
+    async def test_orphan_cost_mismatch_remains_blocked_with_energy_available(self):
+        first, samples = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, samples, base.CAL)
+        orphan = BASE + 3600
+        self.energy_rows = {
+            BASE: {"start": BASE, "sum": 100, "state": 100},
+            orphan: {"start": orphan, "sum": 100.1875, "state": 100.1875},
+        }
+        self.rows[orphan] = {
+            "start": orphan, "state": 99.0, "sum": 99.0,
+        }
+        later, later_samples = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_samples, base.CAL,
+        )
+        status = self.recorder.status
+        self.assertEqual(status["reconciled_cost_hours"], 0)
+        self.assertEqual(status["last_costed_hour"], BASE)
+        self.assertEqual(self.rows[orphan]["sum"], 99.0)
+        self.assertEqual(status["pending_cost_hours"], 1)
+        self.assertIn("does not match", status["last_error"])
 
     async def test_foreign_recorder_cost_hour_is_diagnosed_not_overwritten(self):
         first, records = build_hour(BASE, 40000)
