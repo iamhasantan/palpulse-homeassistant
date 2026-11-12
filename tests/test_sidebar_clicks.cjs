@@ -123,6 +123,9 @@ const fakeHass = {
     if (message.type === "palpulse/panel_info") {
       return state;
     }
+    if (message.type === "palpulse/link_verified_cost") {
+      return { linked: true, message: "PalPulse cost statistic linked" };
+    }
     if (message.type === "palpulse/save_settings") {
       return { saved: true, message: "Settings saved", settings_revision: "version-two" };
     }
@@ -187,6 +190,8 @@ async function click(fields) {
   assert.ok(effects.navigate.length === 0, "saving must stay inside sidebar");
   panel.shadowRoot.fields = [];
 
+  await click({ linkcost: "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));
   await click({ refresh: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/panel_info"));
 
