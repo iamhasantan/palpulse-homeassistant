@@ -72,9 +72,12 @@ electricity(m){
 const p=m.settings||{},c=m.cost||{};
 const mode=this._draftMeter===this._meter&&Object.hasOwn(this._draft||{},"pricing_mode")?this._draft.pricing_mode:(p.pricing_mode||"home_assistant");
 const bad=Number(p.daily_free_cap_kwh||0)>0&&Number(p.free_excess_cents_per_kwh||0)<=0;
+const view={...p,...(this._draftMeter===this._meter?(this._draft||{}):{})};
+const missingPeak=mode==="custom_time_of_use"&&Number(view.peak_cents_per_kwh||0)>0&&(!String(view.weekday_peak||"").trim()||!String(view.weekend_peak||"").trim());
 return`<div class="two"><section class="card"><h2>Electricity tariff settings</h2>
 <p>Edit all pricing values directly here. Rates are in Australian cents. The saved historical tariff is not silently rewritten.</p>
 ${bad?this.n("This capped free allowance has no positive excess rate. Enter your retailer's actual over-cap rate before saving.",true):""}
+${missingPeak?this.n("Peak rate is configured but one or both peak windows are empty. Those hours will be billed at the off-peak rate. For Victorian Red Power5, verify 16:00-21:00 daily against your plan.",true):""}
 <label class="field"><span>Pricing method</span><select data-setting="pricing_mode">
 ${[["home_assistant","Home Assistant manages pricing"],["custom_flat","Flat electricity rate"],["custom_time_of_use","Time of use and free hours"]].map(([value,label])=>`<option value="${value}" ${mode===value?"selected":""}>${label}</option>`).join("")}
 </select></label>
@@ -98,7 +101,7 @@ ${this._field(m,"weekend_shoulder","Weekend shoulder hours")}
 </div>${this._settingsActions()}</section>
 <section class="card"><h2>Cost recording health</h2>
 ${c.last_error?this.n(c.last_error,true):this.n("No active cost error reported.")}
-${this.rows([["Cost link",c.energy_dashboard_cost_link||"Unknown"],["Last costed",fmt(c.last_costed_hour)],["Pending cost hours",c.pending_cost_hours??0],["Cost lag (hours)",c.energy_to_cost_lag_hours??"Unknown"],["Reconciled hours",c.reconciled_cost_hours??0],["Unpriced hours",(c.unpriced_hours||[]).length],["Last retry",fmt(c.last_retry_utc)]])}
+${this.rows([["Cost link",c.energy_dashboard_cost_link||"Unknown"],["Last costed",fmt(c.last_costed_hour)],["Pending cost hours",c.pending_cost_hours??0],["Cost lag (hours)",c.energy_to_cost_lag_hours??"Unknown"],["Reconciled hours",c.reconciled_cost_hours??0],["Repaired queued tariff jobs",c.repaired_pending_tariffs??0],["Unpriced hours",(c.unpriced_hours||[]).length],["Last retry",fmt(c.last_retry_utc)]])}
 ${c.recorder_conflict?this.rows(Object.entries(c.recorder_conflict).map(([k,v])=>[k,k.includes("hour")?fmt(v):v])):""}
 <button data-linkcost>Link verified cost to Energy dashboard</button><p class="hint">Only links a matching source with no existing price or cost selection, and only after confirming an actual Recorder cost hour.</p><button data-tab="settings">Other settings and sources</button>
 </section></div>`;}
