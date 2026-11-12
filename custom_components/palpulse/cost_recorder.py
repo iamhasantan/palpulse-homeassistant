@@ -515,7 +515,7 @@ class PalPulseCostRecorder:
                 if (
                     len(samples) != 60 - hour.missing_minutes
                     or hour.missing_minutes < 0
-                    or hour.missing_minutes > 58
+                    or hour.missing_minutes > 59
                 ):
                     self._error = "Cost hour does not match verified energy samples"
                     await self._store.async_save(self._snapshot())
