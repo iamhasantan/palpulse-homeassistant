@@ -20,10 +20,12 @@ from homeassistant.core import callback
 
 from .const import DOMAIN, CONF_ACK_SERVICE
 from .checkpoint import parse_checkpoint_event, replay_eligible, derive_replay_service
+from .panel_settings import revision, visible_settings, normalize_settings
 
 _LOGGER = logging.getLogger(__name__)
 PANEL_WS_TYPE = "palpulse/panel_info"
 REPLAY_WS_TYPE = "palpulse/replay_checkpoint"
+SAVE_WS_TYPE = "palpulse/save_settings"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
 REPLAY_COOLDOWN_SECONDS = 300
 
@@ -48,6 +50,8 @@ def public_meter_summary(entry, importer, writer, energy_migration, cost_migrati
         "energy": importer.health if importer is not None else None,
         "cost": writer.status if writer is not None else None,
         "pricing": {key: options[key] for key in _PRICING_FIELDS if key in options},
+        "settings": visible_settings(options),
+        "settings_revision": revision(options),
         "migration": energy_migration.progress if energy_migration is not None else None,
         "cost_migration": cost_migration.progress if cost_migration is not None else None,
         "statistics": {
@@ -216,6 +220,88 @@ async def ws_replay_checkpoint(hass, connection, msg) -> None:
     })
 
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): SAVE_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("expected_revision"): str,
+    probatio.Required("changes"): dict,
+})
+@websocket_api.async_response
+async def ws_save_settings(hass, connection, msg) -> None:
+    """Persist validated administrator settings without touching Recorder rows."""
+    matches = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == msg["entry_id"]
+    ]
+    if len(matches) != 1 or msg["entry_id"] not in hass.data.get(DOMAIN, {}):
+        connection.send_result(msg["id"], {
+            "saved": False, "message": "This meter is no longer available.",
+        })
+        return
+    entry = matches[0]
+    if revision(entry.options) != msg["expected_revision"]:
+        connection.send_result(msg["id"], {
+            "saved": False,
+            "message": "Settings changed elsewhere. Refresh before saving so no edits are lost.",
+        })
+        return
+    manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry.entry_id)
+    cost_manager = hass.data.get(f"{DOMAIN}_cost_migration", {}).get(entry.entry_id)
+    if (manager is not None and manager.busy) or (
+        cost_manager is not None and cost_manager.busy
+    ):
+        connection.send_result(msg["id"], {
+            "saved": False,
+            "message": "Historical migration is running. Finish it before editing settings.",
+        })
+        return
+    previous = dict(entry.options)
+    try:
+        updated = normalize_settings(
+            previous, msg["changes"],
+            meter=entry.data.get("meter_mac", ""),
+            energy_journal=manager.journal if manager else None,
+            cost_journal=cost_manager.journal if cost_manager else None,
+        )
+    except (ValueError, TypeError) as err:
+        connection.send_result(msg["id"], {
+            "saved": False, "message": str(err)[:500],
+        })
+        return
+    if updated == previous:
+        connection.send_result(msg["id"], {
+            "saved": True, "message": "No changes were needed.",
+            "settings_revision": revision(previous),
+        })
+        return
+
+    # Native OptionsFlowWithReload handles its own path. Explicit sidebar
+    # saves must reload too, recording a new tariff-profile boundary.
+    hass.config_entries.async_update_entry(entry, options=updated)
+    try:
+        reloaded = await hass.config_entries.async_reload(entry.entry_id)
+    except Exception:
+        _LOGGER.exception("PalPulse settings reload failed for %s", entry.entry_id)
+        reloaded = False
+    if not reloaded:
+        hass.config_entries.async_update_entry(entry, options=previous)
+        try:
+            await hass.config_entries.async_reload(entry.entry_id)
+        except Exception:
+            _LOGGER.exception("PalPulse settings rollback reload failed")
+        connection.send_result(msg["id"], {
+            "saved": False,
+            "message": "Integration reload failed. Previous settings were restored; inspect PalPulse logs.",
+        })
+        return
+    connection.send_result(msg["id"], {
+        "saved": True,
+        "message": "Settings saved. The meter reloaded, and future tariff hours use the new profile.",
+        "settings_revision": revision(updated),
+    })
+
 def async_register_panel_api(hass) -> None:
     """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
@@ -223,4 +309,5 @@ def async_register_panel_api(hass) -> None:
         return
     websocket_api.async_register_command(hass, ws_panel_info)
     websocket_api.async_register_command(hass, ws_replay_checkpoint)
+    websocket_api.async_register_command(hass, ws_save_settings)
     hass.data[key] = True
