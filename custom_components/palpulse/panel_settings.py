@@ -15,6 +15,10 @@ from .const import (
     CONF_ACK_SERVICE, CONF_AUTO_LINK_ENERGY_COST, CONF_LEGACY_ENERGY_SOURCE,
     DOMAIN,
 )
+from .tariff_history import (
+    CONF_TARIFF_START, CONF_TARIFF_VERSIONS,
+    upsert_tariff_version, validate_start_date,
+)
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
     CONF_SHOULDER_CENTS, CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS,
@@ -31,6 +35,7 @@ NUMERIC = frozenset((
 ))
 PRICING = frozenset((CONF_PRICING_MODE, *NUMERIC, *WINDOW_FIELDS))
 EDITABLE = PRICING | frozenset((
+    CONF_TARIFF_START,
     CONF_ACK_SERVICE, CONF_AUTO_LINK_ENERGY_COST,
     CONF_LEGACY_ENERGY_SOURCE, COST_SOURCE, COST_SOURCE_MODE,
 ))
@@ -54,6 +59,7 @@ def normalize_settings(
     current: Mapping[str, object], changes: dict, *, meter: str,
     energy_journal: dict | None = None,
     cost_journal: dict | None = None,
+    timezone_name: str = "Australia/Melbourne",
 ) -> dict:
     """Produce a full validated options snapshot, without mutating input."""
     if not isinstance(changes, dict) or not changes:
@@ -64,7 +70,9 @@ def normalize_settings(
     updated = dict(current)
 
     for key, value in changes.items():
-        if key in NUMERIC:
+        if key == CONF_TARIFF_START:
+            updated[key] = validate_start_date(value)
+        elif key in NUMERIC:
             if value is None or value == "":
                 updated.pop(key, None)
                 continue
@@ -116,6 +124,16 @@ def normalize_settings(
 
     if any(key in changes for key in PRICING):
         validate_pricing(updated)
+    # A rate revision without a start date preserves previous behaviour but
+    # cannot retrospectively reprice anything. Once explicitly dated, each
+    # further rate change updates that version until the date is advanced.
+    if CONF_TARIFF_START in changes or any(key in changes for key in PRICING):
+        effective = updated.get(CONF_TARIFF_START)
+        if effective:
+            updated[CONF_TARIFF_VERSIONS] = upsert_tariff_version(
+                updated.get(CONF_TARIFF_VERSIONS, []),
+                effective, updated, timezone_name,
+            )
 
     if energy_journal and energy_journal.get("status") not in (None, "undone"):
         if updated.get(CONF_LEGACY_ENERGY_SOURCE) != current.get(CONF_LEGACY_ENERGY_SOURCE):
