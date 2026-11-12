@@ -2,7 +2,7 @@
 
 Local electricity monitoring for **Powerpal** meters using an ESP32 and Home Assistant. PalPulse brings live readings, timestamped energy history and optional electricity-cost tracking into Home Assistant without a cloud account.
 
-> **Early preview: 0.2b8.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+> **Early preview: 0.3b1.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
 
 ## What it does
 
@@ -16,10 +16,10 @@ PalPulse keeps its historical energy statistic separate from your existing live 
 
 ## Before you install
 
-You'll need Home Assistant **2026.11 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
+You'll need Home Assistant **2026.11.1 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
 
 1. Open **Settings → Marketplace → Add from link** and enter `https://github.com/iamhasantan/palpulse-homeassistant`.
-2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.2b8** under Updates, then restart Home Assistant.
+2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.3b1** under Updates, then restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → PalPulse for Home Assistant** and enter your Powerpal BLE MAC address.
 4. Enable history events in the companion ESPHome component. On the ESPHome device in Home Assistant, allow the device to perform Home Assistant actions.
 5. Check **PalPulse live history status** before switching your Energy dashboard to the new statistic.
@@ -36,7 +36,8 @@ backups and ESP32 recovery in one place.
 - **Overview** shows energy and cost status. A missing cost record appears as
   missing, not as free electricity.
 - **Electricity** edits every tariff rate, daily free allowance, weekday/weekend time window and supply fee directly in the sidebar. It also shows the cost checkpoint and offers a confirmed link of verified PalPulse cost data to the Energy dashboard.
-- **Hourly history** displays real Recorder hours and lets you export a CSV.
+- **Hourly history** displays real Recorder hours, offers a backup-first repair for individually provable historical energy gaps, and lets you export a CSV.
+- **Cost reconciliation** previews and corrects old incorrect charges against date-effective tariff versions. Before any write, it creates and verifies a Recorder-inclusive backup. It also journals and verifies updates to both cumulative cost state and sum.
 - **ESP32 recovery** compares the firmware's saved meter and ACK checkpoints
   with Home Assistant's last verified hour. If supported and safe, you can ask
   ESPHome to retry buffered history from its existing acknowledged cursor.
@@ -46,11 +47,13 @@ backups and ESP32 recovery in one place.
 - **Backups** can request an automatic Home Assistant backup. **Confirm that it
   finished and includes Recorder/history before changing anything.**
 
+Set the **Contract effective from** date in the Electricity tab to the real retailer start date. The date is saved alongside a version of the tariff, not treated as a timestamp of when you happened to click Save. For the 9–12 November issue, open **Cost reconciliation**, preview those four days, review each day's old and proposed AUD total, and explicitly confirm the guarded repair only if the tariff is verified. Selecting a start date alone does **not** change old cost rows. A cost repair changes PalPulse's own long-term monetary statistic after a verified backup and updates its persisted live cost checkpoint. Missing free-cap energy and ambiguous tariffs stay flagged.
+
 Rate editing uses strict server-side validation. A capped free window must have a positive retailer-confirmed excess rate for future configuration, and saved tariff changes start a new profile from a safe hour boundary. Missing native-minute events are never invented; exact hourly kWh may be restored from independently verified cumulative counters. The panel is visible to Home Assistant administrators. It handles multiple
 Powerpal meters separately and doesn't require a manually imported Lovelace
 dashboard.
 
-**Checkpoint replay needs PalPulse ESPHome 0.2b2 or newer**, reliable history
+**Checkpoint replay needs PalPulse ESPHome 0.2b3 or newer**, reliable history
 enabled, and the matching ACK action configured in the Home Assistant
 integration. Earlier ESPHome builds can still record electricity as before,
 but won't provide checkpoint telemetry or the manual replay action. Replaying
@@ -58,7 +61,7 @@ only works while the original minute records remain in the Powerpal's buffer.
 It cannot fill hours that are no longer available or derive missing
 time-of-use charges.
 
-## Automatic best-effort recovery (next experimental preview)
+## Automatic best-effort recovery
 
 PalPulse retries saved energy hours after a restart and every five minutes, even
 if no new ESPHome events arrive. When original native-minute events are missing
