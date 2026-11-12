@@ -201,6 +201,7 @@ class PalPulseImporter:
         self._sum_offset = 0.0
         self._last_reconciled_at: int | None = None
         self._gap_count = 0
+        self._repaired_gap_hours: set[int] = set()
         self._sparse_recovered_count = 0
         self._last_sparse_hour: int | None = None
         self._last_gap_hour: int | None = None
@@ -223,6 +224,7 @@ class PalPulseImporter:
             "sum_offset": self._sum_offset,
             "last_reconciled_at": self._last_reconciled_at,
             "gap_count": self._gap_count,
+            "repaired_gap_hours": sorted(self._repaired_gap_hours),
             "sparse_recovered_count": self._sparse_recovered_count,
             "last_sparse_hour": self._last_sparse_hour,
             "last_gap_hour": self._last_gap_hour,
@@ -261,6 +263,7 @@ class PalPulseImporter:
             self._sum_offset = 0.0
             self._status_message = "Invalid saved Recorder sum offset; review required"
         self._gap_count = int(state.get("gap_count", 0))
+        self._repaired_gap_hours = set(int(x) for x in state.get("repaired_gap_hours", []))
         self._sparse_recovered_count = int(state.get("sparse_recovered_count", 0))
         self._last_sparse_hour = state.get("last_sparse_hour")
         self._last_gap_hour = state.get("last_gap_hour")
