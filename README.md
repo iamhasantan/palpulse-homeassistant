@@ -46,7 +46,7 @@ backups and ESP32 recovery in one place.
 - **Backups** can request an automatic Home Assistant backup. **Confirm that it
   finished and includes Recorder/history before changing anything.**
 
-Rate editing uses strict server-side validation. A capped free window must have a positive retailer-confirmed excess rate for future configuration, and saved tariff changes start a new profile from a safe hour boundary. Missing power measurements are not reconstructed. The panel is visible to Home Assistant administrators. It handles multiple
+Rate editing uses strict server-side validation. A capped free window must have a positive retailer-confirmed excess rate for future configuration, and saved tariff changes start a new profile from a safe hour boundary. Missing native-minute events are never invented; exact hourly kWh may be restored from independently verified cumulative counters. The panel is visible to Home Assistant administrators. It handles multiple
 Powerpal meters separately and doesn't require a manually imported Lovelace
 dashboard.
 
