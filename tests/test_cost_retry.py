@@ -129,6 +129,44 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.status["pending_cost_hours"], 1)
         self.assertIn("missing", self.recorder.status["last_error"].lower())
 
+    async def test_foreign_recorder_cost_hour_is_diagnosed_not_overwritten(self):
+        first, records = build_hour(BASE, 40000)
+        await self.recorder.async_import_verified_hour(first, records, base.CAL)
+        first_total = self.rows[BASE]["sum"]
+
+        # A row created by another source, or by a version with lost Store
+        # state, is not proof of correct tariff and supply-charge accounting.
+        foreign_start = BASE + 3600
+        self.rows[foreign_start] = {
+            "start": foreign_start,
+            "state": first_total + 50.0,
+            "sum": first_total + 50.0,
+        }
+        later, later_records = build_hour(BASE + 7200, 41200)
+        await self.recorder.async_import_verified_hour(
+            later, later_records, base.CAL,
+        )
+        status = self.recorder.status
+        self.assertEqual(status["pending_cost_hours"], 1)
+        self.assertEqual(status["recorder_conflict"], {
+            "checkpoint_utc_hour": BASE,
+            "first_unjournalled_utc_hour": foreign_start,
+            "last_unjournalled_utc_hour": foreign_start,
+            "existing_hour_count": 1,
+            "queued_utc_hour": BASE + 7200,
+        })
+        self.assertIn("existing cost hour", status["last_error"])
+        self.assertEqual(self.rows[foreign_start]["sum"], first_total + 50.0)
+        self.assertNotIn(BASE + 7200, self.rows)
+
+        restarted = mod.PalPulseCostRecorder(self.hass, self.entry, MAC)
+        await restarted.async_load()
+        self.assertEqual(restarted.status["recorder_conflict"], status["recorder_conflict"])
+        self.assertEqual(restarted.status["pending_cost_hours"], 1)
+        await restarted.async_recover_pending()
+        self.assertEqual(self.rows[foreign_start]["sum"], first_total + 50.0)
+        self.assertEqual(restarted.status["pending_cost_hours"], 1)
+
     async def test_link_setting_change_is_not_a_tariff_transition(self):
         self.assertEqual(len(self.recorder._tariff_profiles), 1)
         # The user's consent to maintain an Energy dashboard link, changes to
