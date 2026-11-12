@@ -114,7 +114,10 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     )
     # Recover already-journalled measurements on boot and periodically. It
     # must not require a new ESP32 event to finish a delayed BLE batch.
-    await importer.async_start()
+    try:
+        await importer.async_start()
+    except Exception:
+        _LOGGER.exception("PalPulse energy recovery could not start")
     if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
         # Retry durable cost jobs independently of new meter events. A quiet
         # ESP32 must not leave an earlier Recorder failure stuck forever.
