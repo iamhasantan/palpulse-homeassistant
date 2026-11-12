@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2b6
+
+### What's Changed
+
+- **Fix the PalPulse sidebar controls.** The navigation tabs, Refresh, settings links, CSV download, backup request and ESP32 replay actions now respond to clicks.
+- **Keep the fix tested.** New click-path tests check the actual button interactions, not just JavaScript syntax.
+- **Refresh the dashboard script.** Updating this beta gives the sidebar a new asset URL so Home Assistant can load the corrected version instead of a cached script.
+
+### Experimental preview
+
+Back up Home Assistant including Recorder/history before updating. The button fix does not modify existing energy readings, historical migration records, pricing settings, or ESP32 firmware. Backup and recovery requests still need confirmation and should be checked for successful completion.
+
 ## 0.2b5
 
 ### What's Changed
