@@ -63,7 +63,7 @@ time-of-use charges.
 PalPulse retries saved energy hours after a restart and every five minutes, even
 if no new ESPHome events arrive. When original native-minute events are missing
 but the first and last cumulative meter readings survive, it can recover the
-**exact hourly kWh** with up to 58 missing interior minutes. A verified hour
+**exact hourly kWh** with up to 58 missing interior minutes, or up to 59 when the previous hour's durable final reading also anchors the interval. A verified hour
 with one constant billing band can also recover the exact tariff cost.
 
 Missing cost entries can also be rebuilt from two adjacent Home Assistant
