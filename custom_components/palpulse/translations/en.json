@@ -199,7 +199,7 @@
       },
       "wizard_red_power5": {
         "title": "Red Energy Power5: confirm actual prices",
-        "description": "The suggested free-power hours are **11:00–16:00 daily** with **15 kWh/day free**. Check that these match your actual Red Energy bill. **Enter all paid rates from your bill.** No paid-rate value has been assumed. This screen keeps existing peak/shoulder schedules, which you can adjust under Electricity pricing.",
+        "description": "The suggested free-power hours are **11:00–16:00 daily** with **15 kWh/day free**. Check these against your actual Red Energy plan. Enter all paid rates exactly as shown on your bill. **The rate after the free allowance cannot be zero for a capped offer.** Existing peak/shoulder schedules are kept and can be checked under Electricity prices. No tariff changes are saved until you confirm.",
         "data": {
           "peak_cents_per_kwh": "Peak electricity rate",
           "shoulder_cents_per_kwh": "Shoulder electricity rate",
@@ -346,7 +346,10 @@
       "invalid_energy_source": "Choose a valid existing energy statistic, not the destination PalPulse statistic.",
       "energy_migration_locked": "This energy source is locked to an existing migration journal. Undo that import before changing sources.",
       "invalid_ack_service": "Use the ESPHome action name, for example esphome.powerpal_proxy_palpulse_ack_1a2b3c4d.",
-      "cost_link_not_ready": "The cost link cannot be changed safely yet. Review the status above."
+      "cost_link_not_ready": "The cost link cannot be changed safely yet. Review the status above.",
+      "free_excess_required": "Enter a positive rate for electricity used after the daily 15 kWh free allowance. Check your Red Energy bill for the correct rate.",
+      "invalid_free_window": "Free power must start before it ends. Enter a valid same-day start and end time.",
+      "existing_schedule_overlap": "Your saved peak and shoulder time ranges overlap. Review Electricity prices, then return to this setup. No changes were saved."
     },
     "abort": {
       "history_unavailable": "Migration tools are not loaded. Check PalPulse integration status and try again.",

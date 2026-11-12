@@ -217,6 +217,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             CONF_SUPPLY_CENTS,
             CONF_FREE_EXCESS_CENTS,
         )
+        errors = {}
         if user_input is not None:
             options = {
                 **prior,
@@ -234,18 +235,33 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
             }
             try:
                 validate_pricing(options)
-            except (ValueError, TypeError):
-                errors = {"base": "invalid_pricing"}
+            except (ValueError, TypeError) as err:
+                reason = str(err)
+                if "positive excess rate" in reason:
+                    # Highlight the actual invalid field. Never invent a paid
+                    # rate from the user's other TOU prices.
+                    errors[CONF_FREE_EXCESS_CENTS] = "free_excess_required"
+                elif "Tariff windows must stay within one day" in reason:
+                    errors["free_end"] = "invalid_free_window"
+                elif "Overlapping" in reason:
+                    # Existing peak/shoulder windows may be carried forward
+                    # from an earlier tariff even though this preset hides
+                    # them. Tell the user where to inspect them.
+                    errors["base"] = "existing_schedule_overlap"
+                else:
+                    errors["base"] = "invalid_pricing"
             else:
                 self._wizard_pending = options
                 return await self.async_step_wizard_cost_choice()
-        else:
-            errors = {}
         fields = {}
         for key in rate_keys:
+            current = (
+                user_input[key] if user_input is not None and key in user_input
+                else prior.get(key)
+            )
             marker = (
-                vol.Required(key, default=prior[key])
-                if key in prior else vol.Required(key)
+                vol.Required(key, default=current)
+                if current is not None else vol.Required(key)
             )
             fields[marker] = selector.NumberSelector(
                 selector.NumberSelectorConfig(
@@ -254,9 +270,13 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
                     unit_of_measurement="c/kWh" if key != CONF_SUPPLY_CENTS else "c/day",
                 )
             )
-        fields[vol.Required("free_start", default="11:00")] = selector.TimeSelector()
-        fields[vol.Required("free_end", default="16:00")] = selector.TimeSelector()
-        fields[vol.Required(CONF_FREE_CAP_KWH, default=prior.get(CONF_FREE_CAP_KWH, 15))] = (
+        values = user_input or {}
+        fields[vol.Required("free_start", default=values.get("free_start", "11:00"))] = selector.TimeSelector()
+        fields[vol.Required("free_end", default=values.get("free_end", "16:00"))] = selector.TimeSelector()
+        fields[vol.Required(
+            CONF_FREE_CAP_KWH,
+            default=values.get(CONF_FREE_CAP_KWH, prior.get(CONF_FREE_CAP_KWH, 15)),
+        )] = (
             selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=10000, step="any",

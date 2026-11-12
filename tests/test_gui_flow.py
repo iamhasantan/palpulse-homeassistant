@@ -323,6 +323,51 @@ class GuiFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["data"]["pricing_mode"], "custom_time_of_use")
         self.assertEqual(saved["data"]["daily_free_cap_kwh"], 15)
 
+    async def test_power5_zero_excess_pinpoints_the_field_and_preserves_inputs(self):
+        await self.flow.async_step_wizard({"setup_goal": "red_power5"})
+        invalid = {
+            "peak_cents_per_kwh": 34.936,
+            "shoulder_cents_per_kwh": 0,
+            "offpeak_cents_per_kwh": 20.24,
+            "daily_supply_cents": 118.217,
+            "free_excess_cents_per_kwh": 0,
+            "free_start": "11:00:00",
+            "free_end": "16:00:00",
+            "daily_free_cap_kwh": 15,
+        }
+        original = dict(self.flow.config_entry.options)
+        form = await self.flow.async_step_wizard_red_power5(invalid)
+        self.assertEqual(form["type"], "form")
+        self.assertEqual(
+            form["errors"], {"free_excess_cents_per_kwh": "free_excess_required"}
+        )
+        self.assertEqual(self.flow.config_entry.options, original)
+        self.assertEqual(invalid["free_excess_cents_per_kwh"], 0)
+        self.assertNotIn("free_excess_cents_per_kwh", self.flow._wizard_pending)
+
+    async def test_power5_reports_conflicts_with_inherited_peak_shoulder_schedule(self):
+        self.flow.config_entry.options = {
+            "pricing_mode": "custom_time_of_use",
+            "weekday_peak": "16:00-21:00",
+            "weekday_shoulder": "17:00-19:00",
+        }
+        await self.flow.async_step_wizard({"setup_goal": "red_power5"})
+        payload = {
+            "peak_cents_per_kwh": 34.936,
+            "shoulder_cents_per_kwh": 0,
+            "offpeak_cents_per_kwh": 20.24,
+            "daily_supply_cents": 118.217,
+            "free_excess_cents_per_kwh": 20.24,
+            "free_start": "11:00:00",
+            "free_end": "16:00:00",
+            "daily_free_cap_kwh": 15,
+        }
+        screen = await self.flow.async_step_wizard_red_power5(payload)
+        self.assertEqual(screen["errors"]["base"], "existing_schedule_overlap")
+        self.assertEqual(
+            self.flow.config_entry.options["weekday_shoulder"], "17:00-19:00"
+        )
+
     async def test_wizard_cost_source_selection_is_not_an_import(self):
         first = await self.flow.async_step_wizard(
             {"setup_goal": "old_costs"}
