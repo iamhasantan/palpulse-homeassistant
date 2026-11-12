@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2b4
+
+### What's Changed
+
+- **Safer cost history recovery.** PalPulse can now recognise an already-recorded electricity cost hour when its saved checkpoint falls behind Recorder. It checks the corresponding energy readings, tariff and recorded charge before advancing the checkpoint, without rewriting the original cost row.
+- **Better error messages.** The Red Energy Power5 setup now points to the specific invalid rate when a capped free allowance has a zero excess rate. It also explains conflicting peak and shoulder schedules instead of making you guess.
+- **Clearer troubleshooting.** When cost history cannot be safely reconciled, diagnostics show which existing hours are involved so they can be reviewed without deleting or changing Recorder data.
+
+### Experimental preview
+
+**Back up Home Assistant, including Recorder/history, before updating.** This beta is for testing, not billing. Automatic recovery is intentionally limited to previously recorded, independently verified paid hours. Missing free-power measurements, ambiguous tariffs and mismatched costs remain blocked rather than estimated. Historical imports, original energy statistics and ESPHome firmware are not changed by this release. Check the cost import status after upgrading.
+
 ## 0.2b3
 
 ### What's Changed
