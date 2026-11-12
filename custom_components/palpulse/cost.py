@@ -73,16 +73,9 @@ def price_verified_hour(
     if any(item.timestamp != first + i * 60 for i, item in enumerate(records)):
         raise ValueError("Missing or irregular native-minute samples")
     zone = ZoneInfo(time_zone)
-    requires_excess = any(
-        free_window_active(
-            options, datetime.fromtimestamp(r.timestamp, timezone.utc).astimezone(zone),
-        )
-        for r in records
-    )
-    # A legacy capped-free plan with an unfilled excess rate cannot price
-    # *free-window* consumption. Its independently verifiable paid-only hours
-    # must not be blocked by a tariff field that they never use.
-    validate_pricing(options, require_excess_rate=requires_excess)
+    # Validate the rest of the tariff first. A missing excess rate matters
+    # only if verified consumption actually exceeds the remaining allowance.
+    validate_pricing(options, require_excess_rate=False)
     used_by_date = {
         str(key): Decimal(str(value))
         for key, value in (previous_free_kwh or {}).items()
@@ -102,11 +95,13 @@ def price_verified_hour(
             prior = used_by_date.get(date_key, Decimal(0))
             if cap:
                 free_kwh = min(kwh, max(Decimal(0), cap - prior))
+                if kwh > free_kwh and overflow <= 0:
+                    raise ValueError("A positive excess rate is required for a capped free window")
                 total += (kwh - free_kwh) * overflow
             # cap == 0 means an unlimited free interval.
             used_by_date[date_key] = prior + kwh
         else:
-            rate = price_for_datetime(options, local, require_excess_rate=requires_excess)
+            rate = price_for_datetime(options, local, require_excess_rate=False)
             if rate is None:
                 raise ValueError("Current tariff rate unavailable")
             total += kwh * Decimal(str(rate))

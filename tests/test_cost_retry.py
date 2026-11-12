@@ -6,6 +6,8 @@ import importlib
 import sys
 import types
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import AsyncMock, patch
 
 import test_importer as base
@@ -68,6 +70,38 @@ class CostRetryTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.patch_read.stop)
         self.addCleanup(self.patch_write.stop)
         await self.recorder.async_load()
+
+    async def test_legacy_free_hour_and_missing_transition_do_not_block_paid_hours(self):
+        tz = ZoneInfo("Australia/Melbourne")
+        start = int(datetime(2026, 11, 12, 11, tzinfo=tz).timestamp())
+        options = {
+            "pricing_mode": "custom_time_of_use", "peak_cents_per_kwh": 34.936,
+            "shoulder_cents_per_kwh": 0, "offpeak_cents_per_kwh": 20.24,
+            "daily_supply_cents": 118.217, "weekday_free": "11:00-16:00",
+            "weekend_free": "11:00-16:00", "daily_free_cap_kwh": 15,
+            "free_excess_cents_per_kwh": 0,
+        }
+        self.entry.options = options
+        self.recorder._tariff_profiles = [{"from": 0, "options": options, "timezone": "Australia/Melbourne"}]
+        self.recorder._last_hour = start - 3600
+        self.recorder._last_supply_date = "2026-11-12"
+        hour, samples = build_hour(start, 40000)
+        await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertIn(start, self.rows)
+        self.assertEqual(self.rows[start]["sum"], 0)
+
+        # The 12 pm transition was not queued. Do not invent its free usage.
+        later = dict(options, free_excess_cents_per_kwh=16.412)
+        self.recorder._tariff_profiles.append({"from": start + 7200, "options": later, "timezone": "Australia/Melbourne"})
+        hour, samples = build_hour(start + 7200, 41000)
+        await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertIn(start + 7200, self.recorder._unpriced_hours)
+        self.assertNotIn(start + 7200, self.rows)
+
+        hour, samples = build_hour(start + 5 * 3600, 45000)
+        await self.recorder.async_import_verified_hour(hour, samples, base.CAL)
+        self.assertIn(start + 5 * 3600, self.rows)
+        self.assertEqual(self.recorder.status["pending_cost_hours"], 0)
 
     async def test_pending_cost_recovers_at_startup_without_new_meter_data(self):
         hour, samples = build_hour(BASE, 40000)
