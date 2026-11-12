@@ -549,13 +549,19 @@ class PalPulseCostRecorder:
         if (
             old.get(CONF_PRICING_MODE) != "custom_time_of_use"
             or float(old.get(CONF_FREE_CAP_KWH, 0)) <= 0
-            or float(old.get(CONF_FREE_EXCESS_CENTS, 0)) > 0
             or float(current.get(CONF_FREE_EXCESS_CENTS, 0)) <= 0
+            or (
+                float(old.get(CONF_FREE_EXCESS_CENTS, 0)) > 0
+                and float(old[CONF_FREE_EXCESS_CENTS])
+                    != float(current[CONF_FREE_EXCESS_CENTS])
+            )
             or item["timezone"] != self.hass.config.time_zone
         ):
             return
 
-        repairable = {CONF_FREE_EXCESS_CENTS}
+        repairable = set()
+        if float(old.get(CONF_FREE_EXCESS_CENTS, 0)) <= 0:
+            repairable.add(CONF_FREE_EXCESS_CENTS)
         # A known Power5 setup omission left a peak rate populated without
         # its 4-9pm window. Only accept the explicit corrected Power5
         # schedule, never a generic tariff change.
@@ -574,7 +580,7 @@ class PalPulseCostRecorder:
         ):
             repairable.update(("weekday_peak", "weekend_peak"))
 
-        if any(
+        if not repairable or any(
             (old.get(key) or "") != (current.get(key) or "")
             for key in _TARIFF_FIELDS if key not in repairable
         ):
