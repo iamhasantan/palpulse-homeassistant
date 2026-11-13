@@ -110,6 +110,7 @@ async def preview_cost_reconciliation(
 
 async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
+    *, progress=None,
 ) -> dict:
     """Backup -> journal -> compare -> commit -> verify, with crash resumption."""
     if not isinstance(digest, str) or len(digest) != 64:
@@ -270,6 +271,8 @@ async def apply_cost_reconciliation(
                 }
                 saved["status"] = "writing"
                 await store.async_save(saved)
+                if progress is not None:
+                    progress(int(saved.get("rows_committed", 0)), len(plan["rows"]))
                 changed = 0
                 for offset in range(0, len(plan["rows"]), 12):
                     chunk = plan["rows"][offset:offset + 12]
@@ -314,6 +317,8 @@ async def apply_cost_reconciliation(
                             )
                     saved["rows_committed"] = offset + len(chunk)
                     await store.async_save(saved)
+                    if progress is not None:
+                        progress(saved["rows_committed"], len(plan["rows"]))
 
                 # Keep the live writer's durable checkpoint aligned with the
                 # new cost statistic. A restart must not restore the old sum.
