@@ -1,0 +1,61 @@
+name: Sync PalPulse 0.4b3 feature overview release description
+on:
+  push:
+    branches:
+      - release/sync-0.4b3-feature-overview
+    paths:
+      - .github/workflows/sync-0.4b3-feature-overview.yml
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Validate source README, release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected_main=c8ee0f7b1d0a502425c29e369c9333da39a81eb2
+          expected_tag=6227319b0950aafa386f4aeb078143f65a64e04d
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$main_sha" = "$expected_main" || { echo 'main moved, aborting docs sync' >&2; exit 1; }
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/0.4b3" --jq '.object.sha')"
+          test "$tag_sha" = "$expected_tag" || { echo '0.4b3 tag changed, aborting' >&2; exit 1; }
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/manifest.json?ref=main" --jq '.content' | base64 --decode | jq -r '.version')"
+          test "$version" = '0.4b3'
+          gh api "repos/${GITHUB_REPOSITORY}/contents/README.md?ref=main" --jq '.content' | base64 --decode > "$RUNNER_TEMP/release-overview.md"
+          grep -q '^## Features$' "$RUNNER_TEMP/release-overview.md"
+          grep -q '^## Project status$' "$RUNNER_TEMP/release-overview.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/0.4b3" --jq '.tag_name' | grep -qx '0.4b3'
+      - name: Replace only the published GitHub release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit 0.4b3 --repo "$GITHUB_REPOSITORY" \
+            --notes-file "$RUNNER_TEMP/release-overview.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/0.4b3" --jq '.body' > "$RUNNER_TEMP/current-release-body.md"
+          python3 - "$RUNNER_TEMP/release-overview.md" "$RUNNER_TEMP/current-release-body.md" <<'PY'
+          import sys,hashlib
+          reference=open(sys.argv[1],encoding='utf-8').read().rstrip()
+          actual=open(sys.argv[2],encoding='utf-8').read().rstrip()
+          if actual != reference:
+              raise SystemExit('Published 0.4b3 release description did not match README')
+          print('Release description verified against current main README')
+          PY
+      - name: Store release sync verification in helper branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/0.4b3" \
+            --jq '{tag_name, html_url, draft, prerelease, updated_at}' > "$RUNNER_TEMP/sync-report.json"
+          jq -e '.tag_name == "0.4b3" and .draft == false' "$RUNNER_TEMP/sync-report.json" >/dev/null
+          b64="$(base64 -w0 "$RUNNER_TEMP/sync-report.json")"
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/.github/palpulse-0.4b3-feature-overview-synced.json" \
+            -f message='docs: verify 0.4b3 release description matches feature README' \
+            -f branch='release/sync-0.4b3-feature-overview' \
+            -f content="$b64" >/dev/null
+          cat "$RUNNER_TEMP/sync-report.json"
