@@ -44,6 +44,7 @@ def _public_saved(saved):
         "total_rows": len(plan.get("rows", [])),
         "resume_required": saved.get("status") in INCOMPLETE,
         "last_error": saved.get("last_error"),
+        "failed_stage": saved.get("failed_stage"),
     }
     return result
 
@@ -60,7 +61,11 @@ async def status(hass, entry) -> dict:
         "status": "idle", "resume_required": False,
     }
     if job and job.get("status") == "failed":
+        # Never report a failed live retry as merely an old paused journal.
+        result["status"] = "failed"
+        result["resume_required"] = result.get("resume_required", False)
         result["last_error"] = job.get("last_error")
+        result["failed_stage"] = job.get("failed_stage")
     if job and job.get("status") == "complete":
         result["status"] = "complete"
     return result
@@ -186,14 +191,17 @@ async def launch(
 
         jobs[entry_id] = {
             "status": "running", "start_date": start_day,
-            "end_date": end_day, "rows_committed": 0, "total_rows": 0,
-            "last_error": None,
+            "end_date": end_day,
+            "rows_committed": int(saved.get("rows_committed", 0)) if incomplete else 0,
+            "total_rows": len((saved.get("plan") or {}).get("rows", [])) if incomplete else 0,
+            "last_error": None, "stage": "verifying_saved_backup" if incomplete else "creating_backup",
         }
 
         async def worker() -> None:
             def progress(done: int, total: int) -> None:
                 jobs[entry_id]["rows_committed"] = done
                 jobs[entry_id]["total_rows"] = total
+                jobs[entry_id]["stage"] = "verifying_recorder_batches"
 
             try:
                 result = await apply_cost_reconciliation(
@@ -206,10 +214,21 @@ async def launch(
                 })
             except Exception as err:
                 _LOGGER.exception("PalPulse full-contract cost repair stopped safely")
+                message = f"{type(err).__name__}: {err}"[:500]
                 jobs[entry_id].update({
-                    "status": "failed",
-                    "last_error": f"{type(err).__name__}: {err}"[:500],
+                    "status": "failed", "last_error": message,
+                    "failed_stage": jobs[entry_id].get("stage"),
                 })
+                # Keep the original persisted plan, digest and backup intact.
+                # Only record an error for diagnostics across HA restarts.
+                try:
+                    latest = await _store(hass, entry.data["meter_mac"]).async_load()
+                    if isinstance(latest, dict) and latest.get("status") in INCOMPLETE:
+                        latest["last_error"] = message
+                        latest["failed_stage"] = jobs[entry_id].get("failed_stage")
+                        await _store(hass, entry.data["meter_mac"]).async_save(latest)
+                except Exception:
+                    _LOGGER.exception("Unable to persist cost repair failure reason")
 
         # HA owns the running task. Closing the browser will not cancel a repair.
         hass.async_create_task(worker())

@@ -446,6 +446,89 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "writing",
         )
 
+    async def test_failed_resume_exposes_reason_not_stale_progress(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        self.manager._verify_prior_backup.side_effect = RuntimeError(
+            "Previous Recorder backup is unavailable"
+        )
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertTrue(result["started"])
+        self.assertEqual(
+            (await supervisor.status(self.hass, self.entry))["rows_committed"],
+            12,
+        )
+        await asyncio.gather(*spawned)
+        status = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(status["status"], "failed")
+        self.assertTrue(status["resume_required"])
+        self.assertEqual(status["rows_committed"], 12)
+        self.assertIn("Previous Recorder backup is unavailable",
+                      status["last_error"])
+        self.assertIn("Previous Recorder backup is unavailable",
+                      MockStore.VALUES[
+                          f"palpulse_cost_reconcile_{MAC}"]["last_error"])
+        self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
+
+    async def test_resume_carries_correction_into_live_hours_after_preview(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        later = self.end
+        self.cost_rows[later] = {
+            "start": later, "state": 2.85, "sum": 2.85,
+        }
+        self.writer._last_hour = later
+        self.writer._sum = 2.85
+        self.writer._last_supply_date = "2026-11-10"
+        self.writer._free_used = {"2026-11-10": 3.0}
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(journal["status"], "complete")
+        self.assertEqual(len(journal["plan"]["rows"]), 25)
+        self.assertEqual(len(journal["tail_backups"]), 1)
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertAlmostEqual(self.cost_rows[later]["sum"],
+                               plan["last_sum"] + 0.20, places=5)
+        self.assertEqual(self.writer._last_hour, later)
+        self.assertAlmostEqual(self.writer._sum, plan["last_sum"] + 0.20, places=5)
+        self.assertEqual(self.writer._last_supply_date, "2026-11-10")
+        self.assertEqual(self.writer._free_used, {"2026-11-10": 3.0})
+
+    async def test_resume_refuses_to_shift_unverified_live_tail(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        later = self.end
+        self.cost_rows[later] = {
+            "start": later, "state": 2.85, "sum": 2.85,
+        }
+        self.writer._last_hour = later
+        self.writer._sum = 99.0
+        with self.assertRaisesRegex(ValueError, "saved live cost checkpoint"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.cost_rows[later]["sum"], 2.85)
+        self.assertEqual(len(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["plan"]["rows"]), 24)
+        self.manager._backup.assert_awaited_once()
+
     async def test_resumes_interrupted_batched_writes_without_double_charge(self):
         plan = await self.preview()
         self.fail_on_call = 2

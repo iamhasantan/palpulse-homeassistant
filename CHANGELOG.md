@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.3b5
+
+### What's Changed
+
+- **Stopped historical repairs are no longer shown as stuck at 12/66.** The Cost reconciliation page now surfaces the actual failure and stage instead of hiding the exception behind the old paused-journal message. Retains verified progress, original backup and replay journal across Home Assistant restarts.
+- **Correct resume counts and prompt.** A resumed job starts at its last confirmed row rather than 0/0. The dashboard shows **Continue previous repair** with the original dates and verified row count. Automatic polling increases to every 15 seconds only while a correction is actually running; the browser may be closed without interrupting the Home Assistant task.
+- **Live hours recorded after the original preview.** If the cost writer has advanced beyond the saved repair range, PalPulse now creates and verifies an *additional Recorder-inclusive backup* of the newer hours. It then journals a guarded extension, preserving those hours' original cost differences while carrying only the proven correction to their cumulative state/sum. It does not reprice those later hours or reset the live daily free/supply ledger.
+- **Safer crash recovery.** A resumed repair checks the original and supplementary backups, old or already-corrected Recorder rows, live cumulative writer checkpoint, and unchanged energy fingerprint. Missing or conflicting live data pauses with an explicit reason. Existing repaired rows are verified, never double-charged.
+- **Regression tests.** Verify a second-batch interruption, continued live metering, supplementary backup, preserved daily free/supply context, inconsistent live checkpoint refusal, and visible failed-resume status with exact error.
+
+### Test and safety notes
+
+Requires **Home Assistant 2026.11.1**. This patch is intended for the saved 2026-11-10 through 2026-11-13 interrupted 12/66-hour repair. It preserves the saved original plan instead of silently deleting it. The integration still requires an explicitly approved, digest-matched and backup-first historical correction; it cannot reconstruct truly missing native minute measurements. The failure status is read-only, and if a live counter fails validation Recorder is not altered by the new extension. CI is not a substitute for acceptance testing against the user's actual Home Assistant Recorder.
+
+
 ## 0.3b4
 
 ### What's Changed
