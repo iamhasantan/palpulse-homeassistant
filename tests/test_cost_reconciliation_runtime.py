@@ -538,6 +538,111 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "writing",
         )
 
+    async def test_changed_energy_is_diagnosed_and_safely_repriced_after_backup(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        # Home Assistant recovered 0.5 kWh in an hour not previously
+        # committed; all later cumulative states advance identically.
+        stamp = self.start + 13 * 3600
+        for hour in list(self.energy_rows):
+            if hour >= stamp:
+                self.energy_rows[hour]["sum"] += 0.5
+                self.energy_rows[hour]["state"] += 0.5
+        with self.assertRaisesRegex(ValueError, "Assess changed energy"):
+            await self.apply(old["digest"])
+        report = await supervisor.assess_changed_energy(
+            self.hass, self.entry,
+        )
+        self.assertEqual(report["status"], "material_change")
+        self.assertTrue(report["can_replan"])
+        self.assertGreater(report["affected_count"], 0)
+        self.assertEqual(self.manager._backup.await_count, 1)
+        result = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry,
+            "2026-11-09", "2026-11-09", old["digest"],
+            allow_energy_rebase=True,
+            expected_energy_digest=report["digest"],
+        )
+        self.assertTrue(result["applied"])
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["status"], "complete")
+        self.assertEqual(saved["rebase_summary"]["changed_hours"], report["affected_count"])
+        self.assertTrue(saved["previous_repair_archive"].startswith("palpulse_cost_reconcile_"))
+        self.assertIn(saved["previous_repair_archive"], MockStore.VALUES)
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertAlmostEqual(self.writer._sum, saved["plan"]["last_sum"], places=5)
+        self.assertAlmostEqual(self.cost_rows[self.end-3600]["sum"],
+                               saved["plan"]["last_sum"], places=5)
+
+    async def test_energy_drift_with_same_charge_can_safely_resume(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        self.energy_rows[self.start + 13*3600]["change"] = None
+        report = await supervisor.assess_changed_energy(self.hass, self.entry)
+        self.assertEqual(report["status"], "equivalent")
+        self.assertTrue(report["can_replan"])
+        result = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            old["digest"], allow_energy_rebase=True,
+            expected_energy_digest=report["digest"],
+        )
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.manager._backup.await_count, 2)
+
+    async def test_changed_energy_repair_refuses_stale_review_without_backup(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        self.energy_rows[self.start + 13*3600]["change"] = None
+        report = await supervisor.assess_changed_energy(self.hass, self.entry)
+        self.energy_rows[self.start + 14*3600]["change"] = None
+        with self.assertRaisesRegex(ValueError, "Energy changed since Fix was reviewed"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                old["digest"], allow_energy_rebase=True,
+                expected_energy_digest=report["digest"],
+            )
+        self.assertEqual(self.manager._backup.await_count, 1)
+        self.assertEqual(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["rows_committed"], 12)
+
+    async def test_changed_energy_rebase_rejects_unexpected_cost_ledger_change(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        self.energy_rows[self.start+13*3600]["change"] = None
+        report = await supervisor.assess_changed_energy(self.hass, self.entry)
+        self.cost_rows[self.start+11*3600]["sum"] = -999.
+        with self.assertRaisesRegex(ValueError, "no longer matches"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                old["digest"], allow_energy_rebase=True,
+                expected_energy_digest=report["digest"],
+            )
+        self.assertEqual(self.manager._backup.await_count, 1)
+
     async def test_failed_resume_exposes_reason_not_stale_progress(self):
         supervisor = importlib.import_module(
             "custom_components.palpulse.cost_reconcile_supervisor"
