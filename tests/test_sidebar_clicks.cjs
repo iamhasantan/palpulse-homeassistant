@@ -247,9 +247,19 @@ async function click(fields) {
     rows_committed: 12, total_rows: 144,
   };
   await panel.refresh();
-  assert.ok(panel.shadowRoot.innerHTML.includes("Resume previous repair"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("Continue previous repair"));
   await click({ "cost-resume": "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/cost_reconcile_resume" && x.confirm === true));
+  state.meters[0].cost_repair = {
+    status: "failed", resume_required: true,
+    start_date: "2026-11-10", end_date: "2026-11-13",
+    rows_committed: 12, total_rows: 66, failed_stage: "verifying_recorder_batches",
+    last_error: "ValueError: Live cost checkpoint and Recorder sum disagree",
+  };
+  await panel.refresh();
+  assert.ok(panel.shadowRoot.innerHTML.includes("Cost repair stopped"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("12 / 66"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("Live cost checkpoint and Recorder sum disagree"));
 
   await click({ linkcost: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));
