@@ -692,6 +692,63 @@ async def ws_cost_repair_fix_energy(hass, connection, msg) -> None:
         })
 
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): "palpulse/missing_cost_preview",
+    probatio.Required("entry_id"): str,
+})
+@websocket_api.async_response
+async def ws_missing_cost_preview(hass, connection, msg) -> None:
+    """Inspect missing cost evidence without altering Recorder or any journal."""
+    entries = [e for e in hass.config_entries.async_entries(DOMAIN)
+               if e.entry_id == msg["entry_id"]]
+    if len(entries) != 1:
+        connection.send_result(msg["id"], {
+            "status": "blocked", "reason": "Selected meter not found",
+        })
+        return
+    try:
+        from .missing_cost_repair import preview
+        result = await preview(hass, entries[0])
+        connection.send_result(msg["id"], result)
+    except Exception as err:
+        _LOGGER.exception("PalPulse missing-cost preview failed")
+        connection.send_result(msg["id"], {
+            "status": "blocked", "reason": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): "palpulse/missing_cost_apply",
+    probatio.Required("entry_id"): str,
+    probatio.Required("confirm"): bool,
+    probatio.Optional("digest"): str,
+})
+@websocket_api.async_response
+async def ws_missing_cost_apply(hass, connection, msg) -> None:
+    """Apply independently verified costs only after an admin confirmation."""
+    entries = [e for e in hass.config_entries.async_entries(DOMAIN)
+               if e.entry_id == msg["entry_id"]]
+    if len(entries) != 1 or not msg["confirm"]:
+        connection.send_result(msg["id"], {
+            "applied": False, "message": "Select a meter and confirm backup-first repair",
+        })
+        return
+    try:
+        from .missing_cost_repair import apply
+        result = await apply(
+            hass, entries[0], confirm=True, digest=msg.get("digest"),
+        )
+        connection.send_result(msg["id"], result)
+    except Exception as err:
+        _LOGGER.exception("PalPulse missing-cost repair refused/failed")
+        connection.send_result(msg["id"], {
+            "applied": False, "message": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
 def async_register_panel_api(hass) -> None:
     """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
@@ -707,4 +764,6 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_cost_reconcile_resume)
     websocket_api.async_register_command(hass, ws_cost_repair_assess)
     websocket_api.async_register_command(hass, ws_cost_repair_fix_energy)
+    websocket_api.async_register_command(hass, ws_missing_cost_preview)
+    websocket_api.async_register_command(hass, ws_missing_cost_apply)
     hass.data[key] = True
