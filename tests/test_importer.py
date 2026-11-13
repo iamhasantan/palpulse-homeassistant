@@ -40,6 +40,9 @@ class FakeRecorder:
     async def async_block_till_done(self):
         return None
 
+    async def async_add_executor_job(self, callback, *args):
+        return await asyncio.to_thread(callback, *args)
+
 ha_helpers_recorder.get_instance = lambda hass: FakeRecorder()
 
 
@@ -87,6 +90,7 @@ def callback(func):
 
 ha_core.callback = callback
 ha_const.Platform = types.SimpleNamespace(BUTTON="button", SENSOR="sensor")
+ha_const.EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"
 
 
 class FakeStore:
@@ -145,8 +149,8 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_event_listener_schedules_records_on_event_loop(self):
-        """ESPHome events must use an event-loop callback, not an executor callback."""
-        listeners = []
+        """Buffer early events while Recorder bootstraps, then deliver FIFO."""
+        listeners, started_listeners, tasks = [], [], []
 
         def listen(event_type, handler):
             self.assertEqual(event_type, "esphome.palpulse_record")
@@ -154,32 +158,108 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             listeners.append(handler)
             return lambda: None
 
+        def listen_once(event_type, handler):
+            self.assertEqual(event_type, "homeassistant_started")
+            started_listeners.append(handler)
+            return lambda: None
+
         async def forward_platforms(entry, platforms):
             self.assertEqual(platforms, ["button", "sensor"])
 
+        def background(_hass, coroutine, name, eager_start=True):
+            self.assertTrue(name.startswith("PalPulse"))
+            self.assertFalse(eager_start)
+            task = asyncio.create_task(coroutine)
+            tasks.append(task)
+            return task
+
         hass = types.SimpleNamespace(
-            bus=types.SimpleNamespace(async_listen=listen),
-            data={},
+            bus=types.SimpleNamespace(
+                async_listen=listen, async_listen_once=listen_once,
+            ),
+            data={}, is_running=False,
             config_entries=types.SimpleNamespace(
                 async_forward_entry_setups=forward_platforms
             ),
-            async_create_task=asyncio.create_task,
         )
         entry = types.SimpleNamespace(
             data={"meter_mac": MAC},
             entry_id="thread-safe-test",
             async_on_unload=lambda _: None,
+            async_create_background_task=background,
         )
-        self.assertTrue(await palpulse.async_setup_entry(hass, entry))
-        self.assertEqual(len(listeners), 1)
+        try:
+            self.assertTrue(await palpulse.async_setup_entry(hass, entry))
+            self.assertEqual(len(listeners), 1)
+            self.assertEqual(len(started_listeners), 1)
+            event = types.SimpleNamespace(data=record_event(BASE, 10, 40010))
+            with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+                listeners[0](event)
+                await asyncio.sleep(0)
+                self.assertNotIn(
+                    BASE, hass.data["palpulse"][entry.entry_id]._records,
+                )
+                started_listeners[0](None)
+                for _ in range(20):
+                    await asyncio.sleep(0.01)
+                    if BASE in hass.data["palpulse"][entry.entry_id]._records:
+                        break
+            self.assertIn(
+                BASE, hass.data["palpulse"][entry.entry_id]._records
+            )
+            self.assertEqual(
+                hass.data["palpulse_history_delivery"][entry.entry_id]["received_count"], 1,
+            )
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-        event = types.SimpleNamespace(data=record_event(BASE, 10, 40010))
-        with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
-            listeners[0](event)
-            await asyncio.sleep(0)
-        self.assertIn(
-            BASE, hass.data["palpulse"][entry.entry_id]._records
+    async def test_pending_recovery_does_not_block_home_assistant_boot(self):
+        """A Recorder queue stall must not cancel config-entry bootstrap."""
+        tasks = []
+        never_complete = asyncio.Event()
+        recovery_started = asyncio.Event()
+        async def stalled_recovery(_self):
+            recovery_started.set()
+            await never_complete.wait()
+
+        def background(_hass, coro, _name, eager_start=True):
+            self.assertFalse(eager_start)
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+        async def forward_platforms(_entry, _platforms):
+            return None
+
+        hass = types.SimpleNamespace(
+            data={}, is_running=True,
+            bus=types.SimpleNamespace(
+                async_listen=lambda _event, _cb: lambda: None,
+            ),
+            config_entries=types.SimpleNamespace(
+                async_forward_entry_setups=forward_platforms,
+            ),
         )
+        entry = types.SimpleNamespace(
+            entry_id="test-stalled-recorder",
+            data={"meter_mac": MAC},
+            async_on_unload=lambda _: None,
+            async_create_background_task=background,
+        )
+        try:
+            with patch.object(palpulse.PalPulseImporter, "async_recover_pending",
+                              stalled_recovery):
+                self.assertTrue(await asyncio.wait_for(
+                    palpulse.async_setup_entry(hass, entry), timeout=0.5
+                ))
+                await asyncio.wait_for(recovery_started.wait(), timeout=0.5)
+                self.assertTrue(any(not t.done() for t in tasks))
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def test_persisted_measurements_retry_without_a_new_event(self):
         """A restart must not strand complete buffered energy hours."""
