@@ -31,9 +31,10 @@ _captureDraft(){
 _field(m,key,label,type="text",hint=""){
   const original=m.settings?.[key]??"";
   const value=this._draftMeter===this._meter&&Object.hasOwn(this._draft||{},key)?this._draft[key]:original;
+  const placeholder=type==="number"?"cents or kWh":type==="date"?"YYYY-MM-DD":key==="history_ack_service"?"esphome.powerpal_proxy_palpulse_ack_1234abcd":key.includes("source")?"sensor.example or domain:statistic_id":"HH:MM-HH:MM or blank";
   const input=type==="checkbox"
     ?`<input data-setting="${esc(key)}" type="checkbox" ${value===true?"checked":""}>`
-    :`<input data-setting="${esc(key)}" type="${esc(type)}" ${type==="number"?'min="0" max="10000" step="any"':""} value="${esc(value)}" placeholder="${type==="number"?"cents or kWh":"HH:MM-HH:MM or blank"}">`;
+    :`<input data-setting="${esc(key)}" type="${esc(type)}" ${type==="number"?'min="0" max="10000" step="any"':""} value="${esc(value)}" placeholder="${esc(placeholder)}">`;
   return`<label class="field"><span>${esc(label)}</span>${input}${hint?`<small>${esc(hint)}</small>`:""}</label>`;
 }
 _settingsActions(){return`<div class="actions"><button data-settings-save ${this._saveBusy?"disabled":""}>${this._saveBusy?"Saving…":"Save settings"}</button><button data-settings-reset ${this._saveBusy?"disabled":""}>Discard edits</button></div><p class="hint">Changes are validated and saved for this meter only. The integration reloads to journal any new tariff boundary. Existing Recorder rows are not rewritten.</p>`;}
@@ -111,7 +112,7 @@ reconcile(m){const plan=this._costPlan?.entry_id===this._meter?this._costPlan.pl
 settings(m){
 const v=m.settings||{};
 return`<div class="two"><section class="card"><h2>Connections and dashboard</h2><p>These settings belong to the selected Powerpal meter, not other Home Assistant integrations.</p>
-${this._field(m,"history_ack_service","ESPHome acknowledged history action","text","Example: esphome.device_name_ack_history. Leave empty for original delivery.")}
+${this._field(m,"history_ack_service","ESPHome acknowledged history action","text","Use the actual ESPHome action esphome.powerpal_proxy_palpulse_ack_XXXXXXXX from Developer Tools. Leave empty for unacknowledged delivery. Enabling it requires reliable_history: true and api.custom_services: true in the ESP32 YAML.")}
 ${this._field(m,"auto_link_energy_cost","Maintain the verified Energy cost link","checkbox","Only links an empty matching PalPulse source after Recorder confirms cost records. Never replaces another price.")}
 ${this.rows([["Current cost link",m.cost?.energy_dashboard_cost_link||"Not configured"],["ESP replay action",m.replay_service||"Not available"],["ESP history status",m.energy?.ack_error||"No error reported"]])}
 ${this._settingsActions()}</section>
