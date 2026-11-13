@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.4b1
+
+### What's Changed
+
+- **Forward integrity audit:** Overview and Hourly history distinguish mature missing Recorder energy, missing cost, pending cost and unpriceable hours. A 2h15m settlement grace avoids false alarms while ESPHome catches up; no missing kWh are guessed.
+- **Backlog-safe cost self-healing:** Process up to 168 hourly cost candidates at a time starting from the saved cost checkpoint rather than skipping straight to the latest week after an extended outage. Existing Recorder conflict checks remain intact.
+- **Legacy history controls:** Historical cost reconciliation is hidden under Settings > Advanced historical tools by default. Existing journals, Recorder rows, backups, tariffs and repair code remain unchanged.
+- **Regression coverage:** Recent hourly cutover/missing/queued/unpriceable cases, long cost backlogs and advanced sidebar visibility.
+
+### Safety and acceptance
+
+Requires Home Assistant Core 2026.11.1 or newer. This remains experimental beta software. Back up Home Assistant including Recorder before updating. This release does not rewrite historic Recorder values, delete old repair journals or backups, reset ESPHome NVS, or invent missing data. Historical cost reconciliation is still available through Advanced historical tools. GitHub CI verifies code and simulated recovery paths; a live Home Assistant restart and evidence check remain recommended.
+
+
 ## 0.3b8
 
 ### What's Changed

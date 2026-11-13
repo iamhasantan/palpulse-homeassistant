@@ -260,8 +260,11 @@ class PalPulseCostRecorder:
         energy_id = f"{DOMAIN}:powerpal_{self.mac}_energy"
         # Bound each retry; subsequent five-minute retries continue from
         # whatever verified cost hour was last committed.
-        begin = max(self._last_hour, latest - 168 * 3600)
-        finish = latest + 3600
+        # Walk forward from the durable checkpoint in bounded chunks.
+        # Starting at latest - 168h silently stranded older provable costs
+        # whenever an outage or recorder backlog exceeded one week.
+        begin = self._last_hour
+        finish = min(latest, self._last_hour + 168 * 3600) + 3600
         recorded = await self._read(begin, finish, statistic_id=energy_id)
         by_hour = {int(row["start"]): row for row in recorded}
         for stamp in sorted(by_hour):

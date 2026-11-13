@@ -195,7 +195,17 @@ async function click(fields) {
   // racing the explicit button-path assertions.
   panel._hass = fakeHass;
 
-  // All seven tabs share the same delegated click handler.
+  // Normal navigation hides historical monetary repair without deleting
+  // its code or journal. Only an explicit Advanced toggle exposes the tab.
+  assert.ok(!panel.shadowRoot.innerHTML.includes('data-tab="reconcile"'),
+            "legacy repair should be hidden on the normal dashboard");
+  await click({ tab: "settings" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Show advanced historical tools"));
+  await click({ "advanced-history": "" });
+  assert.ok(panel.shadowRoot.innerHTML.includes('data-tab="reconcile"'),
+            "advanced tools should allow access to preserved legacy recovery");
+
+  // All tabs still share the same delegated click handler.
   const sections = [
     ["overview", "Recent energy"],
     ["electricity", "Electricity tariff settings"],
@@ -211,6 +221,12 @@ async function click(fields) {
     assert.equal(panel._tab, tab, tab + " click did not navigate");
     assert.ok(panel.shadowRoot.innerHTML.includes(heading), tab + " did not render");
   }
+
+  await click({ tab: "settings" });
+  await click({ "advanced-history": "" });
+  assert.ok(!panel.shadowRoot.innerHTML.includes('data-tab="reconcile"'),
+            "hiding advanced controls must also hide the old tab");
+  await click({ "advanced-history": "" });
 
   // Inline editing must submit to the guarded WebSocket endpoint,
   // rather than navigating away or silently altering source state.

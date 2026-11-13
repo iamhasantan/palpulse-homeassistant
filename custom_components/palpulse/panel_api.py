@@ -241,6 +241,28 @@ async def ws_panel_info(hass, connection, msg) -> None:
             _LOGGER.warning("PalPulse panel recent statistics unavailable: %s", err)
             item["recent"] = {}
             item["statistics_error"] = type(err).__name__
+        # Read-only forward integrity audit. Do not call absent measurements
+        # zero or declare fresh incomplete hours missing before replay settles.
+        if item.get("statistics_error") is None:
+            from .hourly_audit import summarize_recent_hours
+            ids = item.get("statistics") or {}
+            recent = item.get("recent") or {}
+            cost = item.get("cost") or {}
+            energy = item.get("energy") or {}
+            item["recent_audit"] = summarize_recent_hours(
+                recent.get(ids.get("energy"), []),
+                recent.get(ids.get("cost"), []),
+                now=int(time.time()),
+                last_completed_hour=energy.get("last_completed_utc_hour"),
+                cost_enabled=bool(cost.get("enabled")),
+                unpriced_hours=cost.get("unpriced_hours") or (),
+                pending_cost_hours=(
+                    int(job["start"]) for job in getattr(writer, "_pending", ())
+                    if "start" in job
+                ),
+            )
+        else:
+            item["recent_audit"] = {"status": "unavailable"}
         meters.append(item)
     connection.send_result(msg["id"], {"meters": meters, "generated_at": int(time.time())})
 
