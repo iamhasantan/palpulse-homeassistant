@@ -148,6 +148,10 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(runtime, "async_add_external_statistics", write),
             patch.object(runtime, "get_instance", lambda hass: FakeRecorder()),
             patch.object(runtime, "Store", MockStore),
+            patch.object(
+                importlib.import_module("custom_components.palpulse.cost_reconcile_supervisor"),
+                "Store", MockStore,
+            ),
         ]
         for item in self.patches:
             item.start()
