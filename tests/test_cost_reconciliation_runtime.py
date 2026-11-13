@@ -368,7 +368,7 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
             await self.apply(plan["digest"])
         journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
-        journal["plan"]["repair_safe"] = False
+        journal["plan"].pop("repair_safe")
         journal["plan"]["rows"][12]["source"] = "legacy_retained"
         self.fail_on_call = None
         before = self.write_calls
@@ -376,6 +376,25 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await self.apply(plan["digest"])
         self.assertEqual(self.write_calls, before)
         self.assertEqual(journal["rows_committed"], 12)
+
+    async def test_explicit_unsafe_saved_plan_never_overridden(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        journal["plan"]["repair_safe"] = False
+        journal["plan"]["blocking_conflicts"] = [{
+            "start": self.start + 11 * 3600,
+            "reason": "Missing proven energy during cost reset",
+        }]
+        self.fail_on_call = None
+        writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "explicitly flagged 1 unsafe"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.write_calls, writes)
+        self.assertEqual(journal["rows_committed"], 12)
+        self.assertNotIn("legacy_audit", journal)
 
     async def test_old_partial_journal_resumes_from_saved_preview(self):
         supervisor = importlib.import_module(
