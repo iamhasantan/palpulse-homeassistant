@@ -446,6 +446,42 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "writing",
         )
 
+    async def test_failed_resume_exposes_reason_not_stale_progress(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        self.manager._verify_prior_backup.side_effect = RuntimeError(
+            "Previous Recorder backup is unavailable"
+        )
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertTrue(result["started"])
+        self.assertEqual(
+            (await supervisor.status(self.hass, self.entry))["rows_committed"],
+            12,
+        )
+        await asyncio.gather(*spawned)
+        status = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(status["status"], "failed")
+        self.assertTrue(status["resume_required"])
+        self.assertEqual(status["rows_committed"], 12)
+        self.assertIn("Previous Recorder backup is unavailable",
+                      status["last_error"])
+        self.assertIn("Previous Recorder backup is unavailable",
+                      MockStore.VALUES[
+                          f"palpulse_cost_reconcile_{MAC}"]["last_error"])
+        self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
+
     async def test_resume_carries_correction_into_live_hours_after_preview(self):
         plan = await self.preview()
         self.fail_on_call = 2
