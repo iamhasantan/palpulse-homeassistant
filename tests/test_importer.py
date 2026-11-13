@@ -220,7 +220,7 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         tasks = []
         never_complete = asyncio.Event()
         recovery_started = asyncio.Event()
-        async def stalled_recovery(_self):
+        async def stalled_start(_self):
             recovery_started.set()
             await never_complete.wait()
 
@@ -249,8 +249,8 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
             async_create_background_task=background,
         )
         try:
-            with patch.object(palpulse.PalPulseImporter, "async_recover_pending",
-                              stalled_recovery):
+            with patch.object(palpulse.PalPulseImporter, "async_start",
+                              stalled_start):
                 self.assertTrue(await asyncio.wait_for(
                     palpulse.async_setup_entry(hass, entry), timeout=0.5
                 ))
@@ -551,7 +551,7 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.importer.health["blocked_utc_hour"], BASE + 3600)
 
     async def test_recorder_failure_does_not_advance_import_cursor(self):
-        class FailedRecorder:
+        class FailedRecorder(FakeRecorder):
             async def async_block_till_done(self):
                 raise RuntimeError("Recorder busy")
 
