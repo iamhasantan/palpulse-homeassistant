@@ -1,0 +1,75 @@
+name: Publish PalPulse 0.9
+on:
+  push:
+    branches:
+      - release/0.9-publish
+    paths:
+      - .github/workflows/publish-0.9.yml
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Confirm merge SHA and release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=c7956f0741d7613af099354a532359566966b4d5
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$main_sha" = "$expected" || { echo 'Main changed since validation. Aborting release.' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/manifest.json?ref=main" --jq '.content' | base64 --decode > "$RUNNER_TEMP/manifest.json"
+          test "$(jq -r .version "$RUNNER_TEMP/manifest.json")" = '0.9'
+          gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/panel.py?ref=main" --jq '.content' | base64 --decode | grep -Fq 'palpulse-panel.js?v=0.9'
+          gh api "repos/${GITHUB_REPOSITORY}/contents/README.md?ref=main" --jq '.content' | base64 --decode > "$RUNNER_TEMP/readme.md"
+          grep -q '^## Features$' "$RUNNER_TEMP/readme.md"
+          grep -q '^## Project status$' "$RUNNER_TEMP/readme.md"
+          python3 - "$RUNNER_TEMP/readme.md" "$RUNNER_TEMP/notes.md" <<'PY'
+          from pathlib import Path
+          import sys
+          source = Path(sys.argv[1]).read_text(encoding='utf-8')
+          # GitHub release descriptions need absolute URLs for repo files.
+          root = 'https://github.com/iamhasantan/palpulse-homeassistant/blob/0.9/'
+          for path in ('docs/setup-and-recovery.md', 'docs/advanced.md', 'CHANGELOG.md', 'LICENSE'):
+              source = source.replace(f']({path})', f']({root}{path})')
+          Path(sys.argv[2]).write_text(source, encoding='utf-8')
+          PY
+      - name: Publish feature-focused 0.9 GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view 0.9 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo '0.9 already exists; refusing to overwrite an existing release' >&2
+            exit 1
+          fi
+          gh release create 0.9 --repo "$GITHUB_REPOSITORY" --target c7956f0741d7613af099354a532359566966b4d5 \
+            --title 'PalPulse 0.9 (Feature Preview)' \
+            --notes-file "$RUNNER_TEMP/notes.md" --latest
+      - name: Verify published version, tag and release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=c7956f0741d7613af099354a532359566966b4d5
+          tagged="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/0.9" --jq '.object.sha')"
+          test "$tagged" = "$expected" || { echo '0.9 tag does not point to verified main commit' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/0.9" --jq '{tag_name, draft, prerelease, html_url, body}' > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/release.json" <<'PY'
+          from pathlib import Path
+          import json, sys
+          expected = Path(sys.argv[1]).read_text(encoding='utf-8').strip()
+          report = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          assert report['tag_name'] == '0.9' and report['draft'] is False
+          assert report['body'].strip() == expected, 'Release body mismatch'
+          print(report['html_url'])
+          PY
+          jq '{tag_name, draft, prerelease, html_url}' "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release-verified.json"
+          b64="$(base64 -w0 "$RUNNER_TEMP/release-verified.json")"
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/.github/palpulse-0.9-release-verified.json" \
+            -f message='chore: confirm published PalPulse 0.9 release metadata' \
+            -f branch='release/0.9-publish' \
+            -f content="$b64" > /dev/null
+          cat "$RUNNER_TEMP/release-verified.json"
