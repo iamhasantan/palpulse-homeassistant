@@ -159,6 +159,7 @@ def build_cost_plan(
             "Verify that this is a legitimate migration/credit before applying."
         )
     old_prior = float(baseline) if baseline_verified else None
+    old_prior_stamp = anchor[0] if anchor is not None and baseline_verified else start_utc - HOUR
     running = Decimal(str(baseline))
     free_used: dict[str, Decimal] = {}
     free_unknown: set[str] = set()
@@ -169,6 +170,7 @@ def build_cost_plan(
     missing_energy = 0
     safe_rows = 0
     retained_rows = 0
+    cost_counter_conflicts = []
 
     for stamp in range(start_utc, end_utc, HOUR):
         local = datetime.fromtimestamp(stamp, timezone.utc).astimezone(
@@ -178,35 +180,62 @@ def build_cost_plan(
         daily = summaries.setdefault(day, {
             "day": day, "recomputed": 0.0, "recorded": 0.0,
             "verified_hours": 0, "retained_hours": 0, "missing_hours": 0,
+            "recorded_complete": True, "recorded_uncertain_hours": 0,
         })
         old = costs.get(stamp)
         old_sum = _num(old, "sum") if old is not None else None
         old_state = _num(old, "state") if old is not None else None
-        if old is not None and (
-            old_sum is None or old_state is None
-            or (old_prior is not None and old_sum < old_prior - TOLERANCE)
-        ):
-            if not baseline_verified and old_sum is not None and old_state is not None:
-                # The first trustworthy cost row is a usable future anchor,
-                # but no charge can be inferred for the intervening interval.
-                issues.append({
-                    "start": stamp,
-                    "reason": "Existing cost baseline cannot be verified",
-                })
-                old_prior = old_sum
-            else:
-                raise ValueError(f"Invalid existing cost counter at UTC {stamp}")
+        # Source Recorder cumulative monetary rows are immutable *evidence*.
+        # Legacy cost imports may have a signed rebase or a daily-reset
+        # discontinuity. A decrease is not an hourly $0 charge and not a
+        # reason to suppress a read-only preview of the genuine energy.
         old_increment = None
-        if old_sum is not None:
-            if old_prior is not None:
+        if old is not None:
+            reason = None
+            kind = None
+            if old_sum is None or old_state is None:
+                kind = "invalid_value"
+                reason = "Existing cost row has a missing or nonfinite state/sum"
+                old_prior = None
+                old_prior_stamp = None
+            elif old_prior is None:
+                kind = "unknown_anchor"
+                reason = "No trustworthy earlier cost total to compute this hourly charge"
+            elif old_sum < old_prior - TOLERANCE:
+                kind = "counter_decrease"
+                reason = (
+                    "Existing cumulative cost decreases; likely a legacy "
+                    "reset, signed correction or import discontinuity"
+                )
+            elif old_prior_stamp != stamp - HOUR:
+                kind = "counter_gap"
+                reason = (
+                    "Existing monetary totals span missing cost hours. "
+                    "The difference is not an hourly price"
+                )
+            else:
                 old_increment = max(0.0, old_sum - old_prior)
                 daily["recorded"] += old_increment
-            else:
-                issues.append({
-                    "start": stamp,
-                    "reason": "First cost row has no independently verified preceding total",
-                })
-            old_prior = old_sum
+            if reason is not None:
+                daily["recorded_complete"] = False
+                daily["recorded_uncertain_hours"] += 1
+                conflict = {
+                    "start": stamp, "date": day, "kind": kind,
+                    "reason": reason,
+                    "previous_sum": old_prior,
+                    "existing_sum": old_sum,
+                    "previous_hour": old_prior_stamp,
+                }
+                cost_counter_conflicts.append(conflict)
+                issues.append({"start": stamp, "reason": reason})
+            if old_sum is not None:
+                old_prior = old_sum
+                old_prior_stamp = stamp
+        else:
+            # The source cost hour is genuinely absent; never assign the
+            # next cumulative jump to this empty hour.
+            daily["recorded_complete"] = False
+            daily["recorded_uncertain_hours"] += 1
 
         energy = energies.get(stamp)
         previous = energies.get(stamp - HOUR)
@@ -282,14 +311,14 @@ def build_cost_plan(
             cost += Decimal(str(options.get(CONF_SUPPLY_CENTS, 0))) / 100
             supply_dates.add(day)
         if cost is None:
-            charge = Decimal(str(old_increment if old_increment is not None else 0))
-            if old is not None:
-                retained_rows += 1
-                daily["retained_hours"] += 1
-            else:
-                # A missing new hour remains absent from the target statistic.
+            if old is None:
+                # Neither energy nor a trustworthy existing hourly charge is
+                # available. Do not manufacture $0 or an empty Recorder row.
                 continue
-            source = "legacy_retained"
+            charge = Decimal(str(old_increment if old_increment is not None else 0))
+            retained_rows += 1
+            daily["retained_hours"] += 1
+            source = "legacy_retained" if old_increment is not None else "legacy_uncertain"
         else:
             charge = cost
             safe_rows += 1
@@ -306,6 +335,17 @@ def build_cost_plan(
             "kwh": None if kwh is None else round(kwh, 9),
             "date": day,
         })
+    by_stamp = {int(row["start"]): row for row in row_plans}
+    # A corrupted old row or an unpriceable reset cannot be overwritten by
+    # a guessed cost. A *finite* decrease can be reconciled only when its
+    # actual kWh and tariff determine a replacement charge independently.
+    blocking_conflicts = [
+        conflict for conflict in cost_counter_conflicts
+        if conflict["kind"] == "invalid_value"
+        or by_stamp.get(conflict["start"], {}).get("source")
+           not in ("verified", "recorded_sum")
+    ]
+    repair_safe = baseline_verified and not blocking_conflicts
     result = {
         "start_utc": start_utc, "end_utc": end_utc, "timezone": zone_name,
         "energy_digest": energy_fingerprint(energy_rows, start_utc, end_utc),
@@ -313,6 +353,9 @@ def build_cost_plan(
         "anchor_sum": float(baseline),
         "baseline_verified": baseline_verified,
         "baseline_issues": baseline_issues,
+        "cost_counter_conflicts": cost_counter_conflicts,
+        "blocking_conflicts": blocking_conflicts,
+        "repair_safe": repair_safe,
         "rows": row_plans,
         "day_totals": [summaries[key] for key in sorted(summaries)],
         "issues": issues, "verified_hours": safe_rows,
