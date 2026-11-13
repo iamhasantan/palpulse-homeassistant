@@ -26,7 +26,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.recorder import get_instance
 
 from .branding import INTEGRATION_NAME, is_legacy_default_entry_title
-from .const import CONF_METER_MAC, CONF_ACK_SERVICE, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
+from .const import CONF_METER_MAC, CONF_ACK_SERVICE, CONF_DISABLE_ACK, DOMAIN, EVENT_TYPE, STAT_NAME, STORAGE_VERSION
+from .ack_discovery import resolve_meter_ack
 from .history import (
     HOUR_SECONDS,
     MAX_BACKFILL_AGE,
@@ -75,7 +76,10 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # Keep user-customized titles, meter identity and all statistics untouched.
     if is_legacy_default_entry_title(getattr(entry, "title", None), meter):
         hass.config_entries.async_update_entry(entry, title=INTEGRATION_NAME)
-    importer = PalPulseImporter(hass, meter, getattr(entry, "options", {}).get(CONF_ACK_SERVICE))
+    importer = PalPulseImporter(
+        hass, meter, getattr(entry, "options", {}).get(CONF_ACK_SERVICE),
+        ack_disabled=entry.options.get(CONF_DISABLE_ACK, False) is True,
+    )
     await importer.async_load()
     # Cost tracking is opt-in. It cannot rewrite or interrupt energy history.
     from .cost import is_cost_enabled
@@ -265,10 +269,12 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
 class PalPulseImporter:
     """Per-meter durable ledger and conservative hourly statistics importer."""
 
-    def __init__(self, hass: HomeAssistant, mac: str, ack_service: str | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, mac: str, ack_service: str | None = None,
+                 *, ack_disabled: bool = False) -> None:
         self.hass = hass
         self.mac = mac
         self._ack_service = ack_service
+        self._ack_disabled = ack_disabled
         self._ack_timestamp: int | None = None
         self._ack_total: int | None = None
         self._ack_error: str | None = None
@@ -382,6 +388,12 @@ class PalPulseImporter:
             self.mac, self.statistic_id, self._last_hour,
         )
 
+    def _resolved_ack(self) -> tuple[str | None, str]:
+        return resolve_meter_ack(
+            self.hass, self.mac, configured=self._ack_service,
+            disabled=self._ack_disabled,
+        )
+
     @property
     def health(self) -> dict:
         """Read-only live importer health, not legacy migration progress."""
@@ -401,8 +413,11 @@ class PalPulseImporter:
             status = "Collecting"
         else:
             status = "Active"
+        ack_action, ack_status = self._resolved_ack()
         return {
             "status": status,
+            "ack_enabled": not self._ack_disabled,
+            "ack_resolution": ack_status,
             "last_event_received": self._last_event_at,
             "last_completed_utc_hour": self._last_hour,
             "blocked_utc_hour": self._blocked_hour,
@@ -413,7 +428,7 @@ class PalPulseImporter:
             "pending_minute_records": len(self._records),
             "message": self._status_message,
             "last_import_error": self._last_import_error,
-            "ack_service": self._ack_service,
+            "ack_service": ack_action,
             "last_acknowledged_utc_minute": self._ack_timestamp,
             "ack_error": self._ack_error,
             "device_rebase_deadline": self._device_rebase_deadline,
@@ -485,7 +500,8 @@ class PalPulseImporter:
 
     async def _ack_received(self, record: Record) -> None:
         """Confirm one durable minute, never an inferred or unverified event."""
-        if not self._ack_service or self._halted or self._last_import_error:
+        action, _ = self._resolved_ack()
+        if action is None or self._halted or self._last_import_error:
             return
         if self._ack_timestamp is None:
             self._ack_timestamp = record.timestamp
@@ -505,7 +521,7 @@ class PalPulseImporter:
         await self._store.async_save(self._snapshot())
         if self._ack_timestamp is None or record.timestamp > self._ack_timestamp:
             return
-        domain, service = self._ack_service.split(".", 1)
+        domain, service = action.split(".", 1)
         if not self.hass.services.has_service(domain, service):
             self._ack_error = "ESPHome acknowledgment action not registered"
             return
@@ -577,7 +593,7 @@ class PalPulseImporter:
                 )
             finally:
                 self._prune(now)
-                if self._ack_service and not self._halted and not self._last_import_error:
+                if not self._ack_disabled and not self._halted and not self._last_import_error:
                     await self._ack_received(record)
                 else:
                     self._store.async_delay_save(self._snapshot, SAVE_DELAY_SECONDS)
