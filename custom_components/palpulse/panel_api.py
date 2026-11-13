@@ -350,7 +350,10 @@ async def ws_save_settings(hass, connection, msg) -> None:
             "message": "Historical migration is running. Finish it before editing settings.",
         })
         return
-    if hass.data.get(f"{DOMAIN}_cost_reconcile_active", {}).get(entry.entry_id):
+    if (
+        hass.data.get(f"{DOMAIN}_cost_reconcile_active", {}).get(entry.entry_id)
+        or hass.data.get(f"{DOMAIN}_cost_reconcile_jobs", {}).get(entry.entry_id, {}).get("status") == "running"
+    ):
         connection.send_result(msg["id"], {
             "saved": False, "message": "A cost reconciliation is in progress. Finish it before editing tariffs.",
         })
@@ -469,6 +472,12 @@ async def ws_repair_historical_gap(hass, connection, msg) -> None:
     ):
         connection.send_result(msg["id"], {
             "repaired": False, "message": "The selected meter is unavailable.",
+        })
+        return
+    if hass.data.get(f"{DOMAIN}_cost_reconcile_jobs", {}).get(msg["entry_id"], {}).get("status") == "running":
+        connection.send_result(msg["id"], {
+            "repaired": False,
+            "message": "A full-period cost repair is running. Finish it before changing historical energy.",
         })
         return
     try:
