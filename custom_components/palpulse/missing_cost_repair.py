@@ -137,8 +137,6 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                 interrupted = legacy.get("status") in ("prepared", "writing", "verified")
                 if automatic and interrupted:
                     raise ValueError("Historical repair journal remains active. Manual approval is required")
-                if writer._pending:
-                    raise ValueError("Durable minute-level cost jobs are still queued. Retry them first")
                 if saved.get("status") in ("prepared", "writing"):
                     if saved.get("settings_revision") != revision(entry.options):
                         raise ValueError("Tariff versions changed since the saved repair")
@@ -154,6 +152,16 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                         raise ValueError("Recorder changed since preview. Assess again")
                     if automatic and plan["missing_hours"] > 24:
                         raise ValueError("Large historical repair requires explicit approval")
+                    # If a durable minute job is already queued for an old
+                    # missing hour, retire it ONLY after independently pricing
+                    # and verifying exactly that row. Newer jobs remain queued.
+                    source = {int(row["start"]): row["source"] for row in plan["rows"]}
+                    if any(
+                        int(job["start"]) < int(plan["end_utc"])
+                        and source.get(int(job["start"])) != "meter_tariff"
+                        for job in writer._pending
+                    ):
+                        raise ValueError("Queued cost jobs overlap unverified repair rows")
                     # Back up before persisting the plan or touching statistics.
                     backup_id = await manager._backup("before filling verified missing PalPulse costs")
                     await manager._verify_prior_backup(backup_id)
@@ -164,6 +172,9 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                         "status": "prepared", "backup_id": backup_id,
                         "plan": plan, "rows_committed": 0,
                         "settings_revision": revision(entry.options),
+                        "energy_digest": energy_fingerprint(
+                            energy, int(plan["start_utc"]), int(plan["end_utc"])
+                        ),
                         "end_utc": plan["end_utc"],
                         "legacy_superseded_on_complete": bool(interrupted),
                     }
@@ -178,9 +189,7 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                 energy = current.get(importer.statistic_id, [])
                 if energy_fingerprint(
                     energy, int(plan["start_utc"]), int(plan["end_utc"]),
-                ) != saved.get("energy_digest", energy_fingerprint(
-                    energy, int(plan["start_utc"]), int(plan["end_utc"])
-                )):
+                ) != saved.get("energy_digest"):
                     raise ValueError("Meter energy changed since the saved correction")
                 existing = {
                     int(row["start"]): row
@@ -202,11 +211,6 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                             raise ValueError(f"Unreviewed cost change at UTC {stamp}; correction refused")
                 # If the first process crashed after writing and before its
                 # journal commit, exact target comparisons make retry idempotent.
-                if "energy_digest" not in saved:
-                    saved["energy_digest"] = energy_fingerprint(
-                        energy, int(plan["start_utc"]), int(plan["end_utc"])
-                    )
-                    await store.async_save(saved)
                 metadata = {
                     "statistic_id": writer.statistic_id, "source": DOMAIN,
                     "name": "PalPulse electricity cost",
@@ -256,6 +260,10 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                     if item["source"] == "meter_tariff"
                 }
                 writer._unpriced_hours.difference_update(repaired)
+                writer._pending = [
+                    job for job in writer._pending
+                    if int(job["start"]) not in repaired
+                ]
                 writer._error = None
                 await writer._store.async_save(writer._snapshot())
                 if saved.get("legacy_superseded_on_complete"):
