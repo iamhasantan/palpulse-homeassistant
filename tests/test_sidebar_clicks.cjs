@@ -132,11 +132,14 @@ const fakeHass = {
     if (message.type === "palpulse/cost_reconcile_preview") {
       return { ok: true, plan: {
         digest: "c".repeat(64), verified_hours: 4, retained_hours: 0,
+        baseline_verified: true, repair_safe: true, cost_counter_conflicts: [],
+        blocking_conflicts: [], end_utc: 1794489600,
         missing_energy_hours: 0, last_sum: 12.34,
         free_uncertain_dates: [], issues: [],
         day_totals: [{ day: "2026-11-09", recorded: 2.65,
                        recomputed: 10.34, verified_hours: 24,
-                       retained_hours: 0, missing_hours: 0 }],
+                       retained_hours: 0, missing_hours: 0,
+                       recorded_complete: true }],
       }};
     }
     if (message.type === "palpulse/cost_reconcile_apply") {
