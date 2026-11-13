@@ -33,6 +33,8 @@ REPAIR_GAP_WS_TYPE = "palpulse/repair_gap"
 COST_PREVIEW_WS_TYPE = "palpulse/cost_reconcile_preview"
 COST_APPLY_WS_TYPE = "palpulse/cost_reconcile_apply"
 COST_RESUME_WS_TYPE = "palpulse/cost_reconcile_resume"
+COST_ASSESS_WS_TYPE = "palpulse/cost_repair_assess"
+COST_FIX_ENERGY_WS_TYPE = "palpulse/cost_repair_fix_energy"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
 REPLAY_COOLDOWN_SECONDS = 300
 
@@ -602,6 +604,72 @@ async def ws_cost_reconcile_resume(hass, connection, msg) -> None:
         })
 
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): COST_ASSESS_WS_TYPE,
+    probatio.Required("entry_id"): str,
+})
+@websocket_api.async_response
+async def ws_cost_repair_assess(hass, connection, msg) -> None:
+    """Explain the actual changed meter hours before any new cost write."""
+    entries = [
+        e for e in hass.config_entries.async_entries(DOMAIN)
+        if e.entry_id == msg["entry_id"]
+    ]
+    if len(entries) != 1:
+        connection.send_result(msg["id"], {
+            "status": "not_found", "can_replan": False,
+            "reason": "Selected PalPulse meter not found",
+        })
+        return
+    try:
+        from .cost_reconcile_supervisor import assess_changed_energy
+        report = await assess_changed_energy(hass, entries[0])
+        connection.send_result(msg["id"], report)
+    except Exception as err:
+        _LOGGER.exception("PalPulse cost repair assessment failed")
+        connection.send_result(msg["id"], {
+            "status": "error", "can_replan": False,
+            "reason": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): COST_FIX_ENERGY_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("expected_digest"): str,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_cost_repair_fix_energy(hass, connection, msg) -> None:
+    """Explicitly approve an independently validated reprice and backup."""
+    entries = [
+        e for e in hass.config_entries.async_entries(DOMAIN)
+        if e.entry_id == msg["entry_id"]
+    ]
+    if len(entries) != 1 or not msg["confirm"]:
+        connection.send_result(msg["id"], {
+            "started": False,
+            "message": "Select a meter and confirm a new verified backup",
+        })
+        return
+    try:
+        from .cost_reconcile_supervisor import launch
+        result = await launch(
+            hass, entries[0], None, None, None, resume=True,
+            rebase_energy=True, expected_energy_digest=msg["expected_digest"],
+        )
+        connection.send_result(msg["id"], result)
+    except Exception as err:
+        _LOGGER.exception("PalPulse changed-energy recovery refused")
+        connection.send_result(msg["id"], {
+            "started": False,
+            "message": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
 def async_register_panel_api(hass) -> None:
     """The WebSocket commands belong to HA's lifetime, not one meter entry."""
     key = f"{DOMAIN}_panel_api_registered"
@@ -615,4 +683,6 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_cost_reconcile_preview)
     websocket_api.async_register_command(hass, ws_cost_reconcile_apply)
     websocket_api.async_register_command(hass, ws_cost_reconcile_resume)
+    websocket_api.async_register_command(hass, ws_cost_repair_assess)
+    websocket_api.async_register_command(hass, ws_cost_repair_fix_energy)
     hass.data[key] = True

@@ -118,9 +118,51 @@ async def _abort_only_if_untouched(hass, entry, saved: dict) -> bool:
             return True
 
 
+async def assess_changed_energy(hass, entry) -> dict:
+    """Read-only recovery decision for a saved interrupted cost correction."""
+    from .cost_reconcile_runtime import _read
+    from .cost_reconcile_drift import audit_changed_energy
+    from .tariff_history import CONF_TARIFF_VERSIONS
+    saved = await _store(hass, entry.data["meter_mac"]).async_load() or {}
+    if saved.get("status") not in INCOMPLETE:
+        return {
+            "status": "no_repair", "can_replan": False,
+            "reason": "There is no interrupted repair to inspect",
+        }
+    plan = saved.get("plan") or {}
+    if plan.get("repair_safe") is False:
+        return {
+            "status": "unsafe_original", "can_replan": False,
+            "reason": "The original saved repair was explicitly marked unsafe. "
+                      "Recover missing source energy before considering repricing",
+        }
+    importer = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    writer = hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id)
+    if importer is None or writer is None:
+        raise ValueError("Live meter and cost Recorder must be available")
+    if saved.get("settings_revision") != revision(entry.options):
+        return {
+            "status": "tariff_changed", "can_replan": False,
+            "reason": "The saved tariff was edited since this repair started. "
+                      "Historical prices require a separate manual review",
+        }
+    rows = await _read(
+        hass, (importer.statistic_id,),
+        int(plan["start_utc"]) - 3600, int(plan["end_utc"]),
+    )
+    report = audit_changed_energy(
+        saved, rows.get(importer.statistic_id, []),
+        entry.options.get(CONF_TARIFF_VERSIONS, []),
+        hass.config.time_zone,
+    )
+    # Internal write plan and energy fingerprint are never shown publicly.
+    return {k: v for k, v in report.items() if k != "_plan"}
+
+
 async def launch(
     hass, entry, start_day: str | None, end_day: str | None,
     digest: str | None, *, resume: bool = False,
+    rebase_energy: bool = False, expected_energy_digest: str | None = None,
 ) -> dict:
     """Return immediately; HA processes the verified Recorder job itself."""
     entry_id = entry.entry_id
@@ -135,6 +177,11 @@ async def launch(
         incomplete = saved.get("status") in INCOMPLETE
 
         if resume:
+            if rebase_energy and (
+                not isinstance(expected_energy_digest, str)
+                or len(expected_energy_digest) != 64
+            ):
+                return {"started": False, "message": "Assess changed energy again before fixing"}
             if not incomplete:
                 return {
                     "started": False,
@@ -210,6 +257,8 @@ async def launch(
                 result = await apply_cost_reconciliation(
                     hass, entry, start_day, end_day, digest,
                     progress=progress, stage=on_stage,
+                    allow_energy_rebase=rebase_energy,
+                    expected_energy_digest=expected_energy_digest,
                 )
                 jobs[entry_id].update({
                     "status": "complete", "result": result,
