@@ -208,6 +208,43 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.manager._backup.assert_not_awaited()
         self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
 
+    async def test_cost_counter_rebase_is_correctable_when_energy_proves_hour(self):
+        prior, reset = self.start + 6 * 3600, self.start + 7 * 3600
+        self.cost_rows[prior] = {
+            "start": prior, "state": 5.0, "sum": 5.0,
+        }
+        self.cost_rows[reset] = {
+            "start": reset, "state": 2.0, "sum": 2.0,
+        }
+        plan = await self.preview()
+        self.assertTrue(plan["repair_safe"])
+        self.assertEqual(
+            len([x for x in plan["cost_counter_conflicts"]
+                 if x["kind"] == "counter_decrease"]), 1,
+        )
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        self.assertAlmostEqual(self.cost_rows[self.end - 3600]["sum"],
+                               plan["last_sum"], places=5)
+        self.assertAlmostEqual(self.writer._sum, plan["last_sum"], places=5)
+        self.manager._backup.assert_awaited_once()
+
+    async def test_unverifiable_reset_hour_blocks_historical_mutation(self):
+        prior, reset = self.start + 6 * 3600, self.start + 7 * 3600
+        self.cost_rows[prior] = {
+            "start": prior, "state": 5.0, "sum": 5.0,
+        }
+        self.cost_rows[reset] = {
+            "start": reset, "state": 2.0, "sum": 2.0,
+        }
+        del self.energy_rows[reset]
+        plan = await self.preview()
+        self.assertFalse(plan["repair_safe"])
+        with self.assertRaisesRegex(ValueError, "cost counter conflict"):
+            await self.apply(plan["digest"])
+        self.manager._backup.assert_not_awaited()
+        self.assertEqual(self.cost_rows[reset]["sum"], 2.0)
+
     async def test_changed_plan_refused_without_backup_or_writer_changes(self):
         plan = await self.preview()
         self.energy_rows[self.start]["sum"] += 0.75
