@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.9
+
+### Feature preview
+
+PalPulse 0.9 consolidates the existing integration into a feature-focused preview release. There are no changes to the underlying energy, cost, meter-history or recovery algorithms in this version update.
+
+- **Energy monitoring:** Local Powerpal BLE readings, live power, verified hourly and cumulative energy statistics for Home Assistant.
+- **Electricity costs:** Flat and time-of-use tariffs, configurable free-power allowances, dated tariff profiles and Home Assistant cost statistics.
+- **Data continuity:** Acknowledged ESPHome delivery, buffered replay, durable checkpoints, missing-hour detection and guarded recovery from independently verified meter evidence.
+- **Historical tools:** Backup-first import, preview, migration, reconciliation and journalled recovery for provable energy and cost gaps.
+- **Dashboard:** Integrated health, tariff configuration, usage history, diagnostics, ESP32 recovery and CSV export.
+- **Privacy:** Local integration without requiring a cloud account.
+
+**Requirements:** Home Assistant Core 2026.11.1 or newer and compatible PalPulse ESPHome firmware for reliable-history transport. This remains an experimental preview. Back up Home Assistant including Recorder before upgrading. Earlier release notes and historical recovery records are preserved below.
+
 ## 0.4b3
 
 ### Default-on acknowledged ESPHome history
