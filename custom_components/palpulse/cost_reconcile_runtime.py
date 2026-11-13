@@ -192,7 +192,7 @@ async def _extend_plan_for_live_tail(
 
 async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
-    *, progress=None,
+    *, progress=None, stage=None,
 ) -> dict:
     """Backup -> journal -> compare -> commit -> verify, with crash resumption."""
     if not isinstance(digest, str) or len(digest) != 64:
@@ -223,6 +223,8 @@ async def apply_cost_reconciliation(
                 or saved.get("end_date") != end_day
             ):
                 raise ValueError("An earlier repair is incomplete. Resume that same preview first")
+            if stage is not None:
+                stage("verifying_original_backup")
             await manager._verify_prior_backup(saved["backup_id"])
             if saved.get("settings_revision") != revision(entry.options):
                 raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
@@ -338,6 +340,8 @@ async def apply_cost_reconciliation(
                         "Do not resume a stale correction; review the saved journal"
                     )
                 if incomplete and legacy_needs_audit:
+                    if stage is not None:
+                        stage("auditing_saved_cost_plan")
                     # Older, partially committed journals predate the newer
                     # repair_safe field. Never treat absence as proof of
                     # danger or permission to bypass safety. Independently
@@ -354,6 +358,8 @@ async def apply_cost_reconciliation(
                 current_costs = {
                     int(row["start"]): row for row in rows_before.get(cost_id, [])
                 }
+                if stage is not None:
+                    stage("protecting_new_live_costs")
                 await _extend_plan_for_live_tail(
                     hass, writer, manager, store, saved, current_costs,
                 )
@@ -385,6 +391,8 @@ async def apply_cost_reconciliation(
                     "unit_of_measurement": None, "unit_class": None,
                     "mean_type": StatisticMeanType.NONE, "has_sum": True,
                 }
+                if stage is not None:
+                    stage("verifying_recorder_batches")
                 saved["status"] = "writing"
                 await store.async_save(saved)
                 if progress is not None:
@@ -436,6 +444,8 @@ async def apply_cost_reconciliation(
                     if progress is not None:
                         progress(saved["rows_committed"], len(plan["rows"]))
 
+                if stage is not None:
+                    stage("updating_live_cost_checkpoint")
                 # Keep the live writer's durable checkpoint aligned with the
                 # new cost statistic. A restart must not restore the old sum.
                 writer._last_hour = max_written
