@@ -2,7 +2,11 @@
 
 Local electricity monitoring for **Powerpal** meters using an ESP32 and Home Assistant. PalPulse brings live readings, timestamped energy history and optional electricity-cost tracking into Home Assistant without a cloud account.
 
-> **Early preview: 0.4b1.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+> **Early preview: 0.4b2.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+
+## 0.4b2 missing-cost recovery
+
+Hourly history now includes a read-only **Assess missing costs** action and a separately confirmed **Back up and safely restore missing costs** operation. It prices only missing Recorder cost hours using actual, verified hourly meter energy and saved date-effective tariffs. Already recorded per-hour charges are retained, while both state and cumulative sum values are rebased through a verified backup-first journal. It never fills unknown kWh with zero. Conservative unattended recovery handles small, fully verified gaps only when no older unfinished repair is present. Larger gaps and interrupted legacy journals require explicit admin approval. Historical code and backups are retained.
 
 ## What it does
 
@@ -19,7 +23,7 @@ PalPulse keeps its historical energy statistic separate from your existing live 
 You'll need Home Assistant **2026.11.1 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
 
 1. Open **Settings → Marketplace → Add from link** and enter `https://github.com/iamhasantan/palpulse-homeassistant`.
-2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.4b1** under Updates, then restart Home Assistant.
+2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.4b2** under Updates, then restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → PalPulse for Home Assistant** and enter your Powerpal BLE MAC address.
 4. Enable history events in the companion ESPHome component. On the ESPHome device in Home Assistant, allow the device to perform Home Assistant actions.
 5. Check **PalPulse live history status** before switching your Energy dashboard to the new statistic.

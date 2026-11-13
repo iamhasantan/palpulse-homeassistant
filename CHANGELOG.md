@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.4b2
+
+### Missing cost recovery
+
+- Separate missing-cost-only repair from full contract reconciliation. Independently price absent cost hours using Recorder-verified kWh, stored historical tariff versions, and proven capped free-power consumption. Never infer missing consumption.
+- Preserve existing original hourly monetary charges. Rebase later cumulative state and sum after comparing each frozen original Recorder row, and verify writes in 12-hour batches with a crash-resumable Store journal.
+- Require a verified Recorder-inclusive backup and refuse stale previews, unverified source energy, conflicting monetary rows, overlapping migration or incomplete automatic legacy repair.
+- Provide admin-only missing-cost preview and backup-first confirmation directly inside **Hourly history**. Small fully supported gaps may recover automatically after normal cost retries; incomplete legacy jobs and larger repairs require explicit review.
+- Keep legacy cost-reconciliation source and previous backups. A successfully replaced earlier journal is marked superseded without deleting its original evidence.
+- Run regression checks for midnight supply allocation, tariffed free hours, invalid source evidence, and dashboard confirmation.
+
+**Requires HA Core 2026.11.1+.** Experimental beta. Take a completed backup including Recorder before upgrading and check actual Recorder results after restart.
+
 ## 0.4b1
 
 ### What's Changed

@@ -87,6 +87,8 @@ class PalPulseCostRecorder:
         self._last_reconciled_utc_hour: int | None = None
         self._repaired_pending_tariffs = 0
         self._energy_backfill_hours = 0
+        self._last_missing_cost_check = 0.0
+        self._missing_cost_repair_guidance = None
 
     @property
     def status(self) -> dict:
@@ -119,6 +121,7 @@ class PalPulseCostRecorder:
             "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
             "repaired_pending_tariffs": self._repaired_pending_tariffs,
             "recovered_cost_from_energy_hours": self._energy_backfill_hours,
+            "missing_cost_repair_guidance": self._missing_cost_repair_guidance,
         }
 
     def _snapshot(self) -> dict:
@@ -140,6 +143,7 @@ class PalPulseCostRecorder:
             "last_reconciled_utc_hour": self._last_reconciled_utc_hour,
             "repaired_pending_tariffs": self._repaired_pending_tariffs,
             "recovered_cost_from_energy_hours": self._energy_backfill_hours,
+            "missing_cost_repair_guidance": self._missing_cost_repair_guidance,
         }
 
     async def async_load(self) -> None:
@@ -161,6 +165,7 @@ class PalPulseCostRecorder:
         self._last_reconciled_utc_hour = data.get("last_reconciled_utc_hour")
         self._repaired_pending_tariffs = int(data.get("repaired_pending_tariffs", 0))
         self._energy_backfill_hours = int(data.get("recovered_cost_from_energy_hours", 0))
+        self._missing_cost_repair_guidance = data.get("missing_cost_repair_guidance")
         current = _tariff_options(self.entry.options)
         zone = self.hass.config.time_zone
         if not self._tariff_profiles:
@@ -235,6 +240,32 @@ class PalPulseCostRecorder:
             if not self._pending:
                 await self._recover_from_energy_statistics()
             await self._store.async_save(self._snapshot())
+
+        # The normal cost writer lock must be released before the historic
+        # gap-repair worker can lock both energy and cost Recorders. An
+        # independently proven <=24-hour repair may run unattended only when
+        # no legacy monetary repair or migration is outstanding.
+        now = time.monotonic()
+        if now - self._last_missing_cost_check >= 1800:
+            self._last_missing_cost_check = now
+            try:
+                from .missing_cost_repair import apply
+                result = await apply(
+                    self.hass, self.entry, confirm=True, automatic=True,
+                )
+                self._missing_cost_repair_guidance = (
+                    "Recovered verified historical cost gaps"
+                    if result.get("applied") else None
+                )
+            except ValueError as err:
+                # A genuinely unprovable hour is a visible audit warning,
+                # not permission to interrupt newly arriving metering.
+                self._missing_cost_repair_guidance = str(err)[:240]
+            except Exception as err:
+                self._missing_cost_repair_guidance = (
+                    f"Automatic recovery stopped: {type(err).__name__}: {err}"[:240]
+                )
+                _LOGGER.exception("PalPulse automatic missing-cost repair failed")
 
     async def _recover_from_energy_statistics(self) -> None:
         """Use exact adjacent Recorder energy deltas when minute jobs are gone.

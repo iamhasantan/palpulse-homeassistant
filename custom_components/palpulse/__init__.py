@@ -66,7 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     installed = getattr(ha_const, "__version__", None)
     if installed is not None and not supports_home_assistant_version(str(installed)):
         _LOGGER.error(
-            "PalPulse 0.4b1 requires Home Assistant 2026.11.1 or later; found %s",
+            "PalPulse 0.4b2 requires Home Assistant 2026.11.1 or later; found %s",
             installed,
         )
         return False
