@@ -93,6 +93,23 @@ class PanelSettingsTests(unittest.TestCase):
             "legacy_cost_source_mode": "daily_reset",
         }, meter="d8a5d6d91964")
         self.assertEqual(saved["history_ack_service"], "esphome.powerpal_ack")
+        self.assertFalse(settings.visible_settings(saved)["history_ack_disabled"])
+        disabled = settings.normalize_settings(
+            saved, {"history_ack_disabled": True}, meter="d8a5d6d91964",
+        )
+        self.assertTrue(disabled["history_ack_disabled"])
+        self.assertEqual(
+            disabled["history_ack_service"], "esphome.powerpal_ack",
+            "Disabling must preserve an existing override for later re-enabling",
+        )
+        enabled = settings.normalize_settings(
+            disabled, {"history_ack_disabled": False}, meter="d8a5d6d91964",
+        )
+        self.assertFalse(enabled["history_ack_disabled"])
+        with self.assertRaisesRegex(ValueError, "Disable acknowledgements"):
+            settings.normalize_settings(
+                saved, {"history_ack_disabled": "false"}, meter="d8a5d6d91964"
+            )
         self.assertEqual(saved["legacy_cost_source_mode"], "daily_reset")
         self.assertNotIn("unrelated_private_setting", settings.visible_settings(saved))
 
