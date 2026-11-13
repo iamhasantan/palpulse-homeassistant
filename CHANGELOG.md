@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Forward integrity audit:** Overview and Hourly history distinguish mature missing Recorder energy, missing cost, pending cost and unpriceable hours. A 2h15m settlement grace avoids false alarms while ESPHome catches up; no missing kWh are guessed.
+- **Backlog-safe cost self-healing:** Process up to 168 hourly cost candidates at a time starting from the saved cost checkpoint rather than skipping straight to the latest week after an extended outage. Existing Recorder conflict checks remain intact.
+- **Legacy history controls:** Historical cost reconciliation is hidden under Settings > Advanced historical tools by default. Existing journals, Recorder rows, backups, tariffs and repair code remain unchanged.
+- **Regression coverage:** Recent hourly cutover/missing/queued/unpriceable cases, long cost backlogs and advanced sidebar visibility.
+
+
 ## 0.3b8
 
 ### What's Changed
