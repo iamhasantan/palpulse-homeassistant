@@ -132,11 +132,14 @@ const fakeHass = {
     if (message.type === "palpulse/cost_reconcile_preview") {
       return { ok: true, plan: {
         digest: "c".repeat(64), verified_hours: 4, retained_hours: 0,
+        baseline_verified: true, repair_safe: true, cost_counter_conflicts: [],
+        blocking_conflicts: [], end_utc: 1794489600,
         missing_energy_hours: 0, last_sum: 12.34,
         free_uncertain_dates: [], issues: [],
         day_totals: [{ day: "2026-11-09", recorded: 2.65,
                        recomputed: 10.34, verified_hours: 24,
-                       retained_hours: 0, missing_hours: 0 }],
+                       retained_hours: 0, missing_hours: 0,
+                       recorded_complete: true }],
       }};
     }
     if (message.type === "palpulse/cost_reconcile_apply") {
@@ -197,6 +200,14 @@ async function click(fields) {
     dataset: { setting: "free_excess_cents_per_kwh" },
     type: "number", value: "19.75",
   }];
+  // The 60-second automatic refresh must not discard an unsaved tariff edit.
+  const inputListener = panel.shadowRoot.listeners.get("input");
+  assert.equal(typeof inputListener, "function");
+  inputListener({ target: panel.shadowRoot.fields[0] });
+  panel.shadowRoot.fields = [];
+  await panel.refresh();
+  assert.ok(panel.shadowRoot.innerHTML.includes('value="19.75"'),
+            "automatic refresh discarded a draft electricity rate");
   await click({ "settings-save": "" });
   const save = effects.webSocket.find(x => x.type === "palpulse/save_settings");
   assert.equal(save.entry_id, "meter-one");

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.3b3
+
+### What's Changed
+
+- **Legacy cost-counter resets are visible and repairable when evidence supports them.** Home Assistant's November 11, 7 am (AEDT) decrease in the cumulative cost sum previously raised `Invalid existing cost counter`, preventing even a preview. PalPulse now creates a read-only audit of original decreases, missing-cost gaps, invalid monetary values and exact local timestamps.
+- **Counter resets are never treated as free electricity.** A discontinuity in the old monetary statistic does not imply $0 usage. The planner independently prices hours from verified cumulative energy and the effective Red Energy tariff; uncertain hours remain explicitly missing, with an incomplete-source label rather than a fabricated cost difference.
+- **Strict repair eligibility.** A signed old cost baseline remains intact. A cost-counter reset may be corrected only when independently verified energy and the effective tariff provide a replacement charge. Missing or nonfinite counter values or unverified reset-hour energy block historical writes before a backup or Recorder mutation. Historical correction still requires a digest-matched preview, explicit confirmation, verified Recorder-inclusive backup, durable journal and read-after-write checks.
+- **Correct billing-day presentation.** Days with incomplete original cost history show partial recorded totals and no false recorded-versus-proposed difference. Every source counter discontinuity is listed with its timestamps and original monetary sums.
+- **Latest live checkpoint guard.** A preview that stops before the currently recorded cost checkpoint remains read-only; include the latest recorded billing date before attempting to apply a cost correction, so the live writer's cumulative sum does not silently diverge.
+- **ESPHome settings clarity.** Show 'Not enabled / no ACK' instead of a misleading 1 January timestamp when reliable history is disabled. Correct the native ACK-action and statistic-source input placeholders and instructions.
+- **Regression coverage.** Add Nov 11 cost reset detection, backup-first correction when all source energy is independently verified, no-write blocks for missing energy and invalid old cost statistics, and existing end-to-end dashboard click-path validation.
+
+### Experimental preview and acceptance
+
+Requires **Home Assistant 2026.11.1**. Recommended ESPHome firmware remains **0.2b4**. The user's Red Power5 tariff rates and contract effective date must be independently verified. Recover clearly provable missing energy hours before previewing historical cost repair, then preview from Nov 9 **through the current billing date**, not an earlier day that excludes the live cost checkpoint. Never use cost-counter reset previews as proof of a paid invoice. Back up Home Assistant including Recorder. Corrections are opt-in and blocked when independent evidence is insufficient. Hardware and live Recorder acceptance remain outstanding.
+
+
 ## 0.3b2
 
 ### What's Changed

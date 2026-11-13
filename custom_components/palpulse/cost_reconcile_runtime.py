@@ -139,6 +139,11 @@ async def apply_cost_reconciliation(
             plan = saved["plan"]
             if not plan.get("baseline_verified", True):
                 raise ValueError("Saved cost correction has an unverified monetary baseline")
+            if not plan.get("repair_safe", False):
+                raise ValueError(
+                    "Saved cost correction has unverified legacy counter breaks. "
+                    "Review the conflict hours before any Recorder writes"
+                )
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
             if plan["digest"] != digest:
@@ -148,6 +153,13 @@ async def apply_cost_reconciliation(
                     "The earlier monetary baseline contains invalid Recorder rows. "
                     "Preview is read-only until those records are reviewed; "
                     "no historical cost rows were modified"
+                )
+            if not plan.get("repair_safe", False):
+                raise ValueError(
+                    f"{len(plan.get('blocking_conflicts', []))} historical cost "
+                    "counter conflict(s) lack independently verified energy "
+                    "and tariff evidence. Restore recoverable energy hours "
+                    "first. Preview is read-only; Recorder is unchanged"
                 )
             if not any(not _equal(row["old_sum"], row["new_sum"])
                        for row in plan["rows"]):

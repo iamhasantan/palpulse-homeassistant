@@ -196,6 +196,73 @@ class CostReconciliationTests(unittest.TestCase):
         self.assertTrue(p["baseline_verified"])
         self.assertEqual(p["anchor_sum"], 0.0)
 
+    def test_november_11_seven_am_negative_cost_step_is_previewed(self):
+        start, _ = range_for_day("2026-11-11")
+        old = [
+            {"start": start + i * 3600,
+             "sum": 12.0 + i * 0.25,
+             "state": 12.0 + i * 0.25}
+            for i in range(24)
+        ]
+        # 7 am Melbourne is an actual discontinuity of old cumulative costs.
+        old[7]["sum"] = 7.0
+        old[7]["state"] = 7.0
+        for index in range(8, 24):
+            old[index]["sum"] = 7.0 + (index - 7) * 0.25
+            old[index]["state"] = old[index]["sum"]
+        p = self.plan("2026-11-11", existing=old)
+        self.assertEqual(len(
+            [x for x in p["cost_counter_conflicts"]
+             if x["kind"] == "counter_decrease"]), 1)
+        conflict = next(
+            x for x in p["cost_counter_conflicts"]
+            if x["kind"] == "counter_decrease"
+        )
+        self.assertEqual(conflict["start"], start + 7 * 3600)
+        self.assertFalse(p["day_totals"][0]["recorded_complete"])
+        self.assertTrue(p["repair_safe"])
+        self.assertFalse(p["blocking_conflicts"])
+        self.assertAlmostEqual(p["rows"][7]["old_sum"], 7.0)
+
+    def test_missing_energy_at_cost_counter_reset_blocks_apply_without_zero_charge(self):
+        start, _ = range_for_day("2026-11-11")
+        energy = day_rows("2026-11-11", omit=(7,))
+        old = [
+            {"start": start + i * 3600,
+             "sum": 12.0 + i * 0.25,
+             "state": 12.0 + i * 0.25}
+            for i in range(24)
+        ]
+        old[7]["sum"] = 7.0
+        old[7]["state"] = 7.0
+        for index in range(8, 24):
+            old[index]["sum"] = 7.0 + (index - 7) * 0.25
+            old[index]["state"] = old[index]["sum"]
+        _, end = range_for_day("2026-11-11")
+        p = reconcile.build_cost_plan(
+            energy, old, self.versions, start, end, zone_name=MELB.key,
+        )
+        self.assertFalse(p["repair_safe"])
+        self.assertTrue(any(
+            x["start"] == start + 7 * 3600
+            for x in p["blocking_conflicts"]
+        ))
+        self.assertFalse(any(
+            r["start"] == start + 7 * 3600
+            for r in p["rows"]
+        ))
+
+    def test_nonfinite_cost_row_is_never_rewritten_on_guess(self):
+        start, _ = range_for_day("2026-11-11")
+        old = [{
+            "start": start + 7 * 3600,
+            "sum": float("nan"), "state": float("nan"),
+        }]
+        p = self.plan("2026-11-11", existing=old)
+        self.assertFalse(p["repair_safe"])
+        self.assertEqual(p["blocking_conflicts"][0]["kind"], "invalid_value")
+        self.assertEqual(len(p["digest"]), 64)
+
     def test_unknown_previous_plan_is_not_assumed(self):
         start, end = range_for_day("2026-11-09")
         late = history.upsert_tariff_version(
