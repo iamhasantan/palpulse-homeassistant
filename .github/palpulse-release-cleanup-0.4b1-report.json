@@ -1,0 +1,28 @@
+{
+  "protected_release": "0.4b1",
+  "release_records_before": 17,
+  "deleted_release_tags": [
+    "0.3b8",
+    "0.3b7",
+    "0.3b6",
+    "0.3b5",
+    "0.3b4",
+    "0.3b3",
+    "0.3b2",
+    "0.3b1",
+    "0.2b8",
+    "0.2b7",
+    "0.2b6",
+    "0.2b5",
+    "0.2b4",
+    "0.2b3",
+    "0.2b2",
+    "0.2b1"
+  ],
+  "delete_failures": [],
+  "remaining_release_tags": [
+    "0.4b1"
+  ],
+  "unexpected_remaining_older_tags": [],
+  "git_tags_preserved": true
+}
