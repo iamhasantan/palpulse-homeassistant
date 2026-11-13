@@ -98,6 +98,7 @@ const state = {
     cost: { status: "Active", last_costed_hour: 1794420000 },
     pricing: { pricing_mode: "custom_time_of_use" },
     settings_revision: "version-one",
+    tariff_versions: [{ effective_from: "2026-09-15" }],
     settings: { pricing_mode: "custom_time_of_use", peak_cents_per_kwh: 35, offpeak_cents_per_kwh: 20, daily_supply_cents: 118, daily_free_cap_kwh: 15, free_excess_cents_per_kwh: 25 },
     migration: { stage: "completed" },
     cost_migration: { stage: "completed" },
@@ -141,6 +142,9 @@ const fakeHass = {
                        retained_hours: 0, missing_hours: 0,
                        recorded_complete: true }],
       }};
+    }
+    if (message.type === "palpulse/cost_reconcile_resume") {
+      return { started: true, message: "Previous verified repair resumed" };
     }
     if (message.type === "palpulse/cost_reconcile_apply") {
       return { applied: true, changed_hours: 4,
@@ -219,6 +223,8 @@ async function click(fields) {
   // Historical reconciliation is explicitly previewed in the sidebar,
   // and Apply sends the precise verified digest with confirmation.
   await click({ tab: "reconcile" });
+  await click({ "cost-full": "" });
+  assert.equal(panel._costFrom, "2026-09-15", "full-contract button must choose oldest saved tariff");
   await click({ "cost-preview": "" });
   assert.ok(panel.shadowRoot.innerHTML.includes("recorded versus recomputed costs"));
   assert.ok(panel.shadowRoot.innerHTML.includes("2026-11-09"));
@@ -232,6 +238,18 @@ async function click(fields) {
   assert.equal(applyCall.expected_revision, "version-one");
   assert.equal(applyCall.confirm, true);
   assert.ok(effects.confirms.some(x => x.includes("Recorder-inclusive backup")));
+
+  // A stored interrupted repair must provide a direct resume action, with
+  // its original protected dates rather than a confusing date-range error.
+  state.meters[0].cost_repair = {
+    status: "writing", resume_required: true,
+    start_date: "2026-11-05", end_date: "2026-11-10",
+    rows_committed: 12, total_rows: 144,
+  };
+  await panel.refresh();
+  assert.ok(panel.shadowRoot.innerHTML.includes("Resume previous repair"));
+  await click({ "cost-resume": "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/cost_reconcile_resume" && x.confirm === true));
 
   await click({ linkcost: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));

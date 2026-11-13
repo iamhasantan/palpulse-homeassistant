@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.3b4
+
+### What's Changed
+
+- **One date range for the whole electricity contract.** Reconciliation no longer imposes a 14-day limit. Any period from the earliest saved contract-effective tariff date through the current local billing date is eligible, with the actual saved tariff profile selected separately for each measured hour. Dates before the first known tariff are still refused rather than invented.
+- **Simpler dashboard.** The Cost reconciliation tab automatically starts at the first saved tariff date and offers a **Use full contract term** shortcut, one full-range read-only cost preview, and one backup-first **Fix selected dates** action. No need to split a contract into fortnightly corrections.
+- **Keep the browser responsive.** After a confirmed, digest-matched preview, the existing guarded cost writer now runs as a Home Assistant task. It validates the Recorder and source tariff, makes a verified Recorder-inclusive backup, journals its work, and shows verified progress in 12-hour batches. Closing the dashboard does not cancel the HA task.
+- **Fix stranded old repair journals.** An earlier failed cost correction is no longer a silent date-range dead end. If every original monetary Recorder row is *provably unchanged* after the Recorder queue drains, the obsolete journal is safely marked aborted and the newly selected range may proceed. If any historical row differs, the dashboard shows the saved dates and a **Resume previous repair** action using the original journal and verified backup instead. Never erase partially applied history.
+- **Safe restart.** The repair journal persists through Home Assistant restarts; status and previous dates remain visible. The server serializes launch/resume attempts and re-checks tariff revision, original energy rows, cumulative monetary rows and the live checkpoint before committing any repair.
+- **Smaller previews.** Large plans remain server-side; the frontend receives the per-day cost summary, risk flags, progress and immutable digest instead of thousands of raw write rows.
+- **Regression testing.** September-to-November contract spans, safe untouched-journal replacement, refusal to discard a changed Recorder row, crash-resume and dashboard full-range/resume click paths.
+
+### Important safety and test notes
+
+Requires **Home Assistant 2026.11.1** and retains all PalPulse 0.3b3 protections. The plan-effective rates must be verified against your electricity contract. Saving the tariff and previewing costs never change Recorder. Only a separately confirmed correction creates a backup and applies verified source-supported cost hours. An unsafe, partially written older journal cannot be silently abandoned; it must be resumed or reviewed. Live Home Assistant and Powerpal hardware acceptance remains required.
+
+
 ## 0.3b3
 
 ### What's Changed

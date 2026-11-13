@@ -32,6 +32,7 @@ LINK_COST_WS_TYPE = "palpulse/link_verified_cost"
 REPAIR_GAP_WS_TYPE = "palpulse/repair_gap"
 COST_PREVIEW_WS_TYPE = "palpulse/cost_reconcile_preview"
 COST_APPLY_WS_TYPE = "palpulse/cost_reconcile_apply"
+COST_RESUME_WS_TYPE = "palpulse/cost_reconcile_resume"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
 REPLAY_COOLDOWN_SECONDS = 300
 
@@ -211,6 +212,12 @@ async def ws_panel_info(hass, connection, msg) -> None:
         item["checkpoint_delivery"] = hass.data.get(f"{DOMAIN}_checkpoint_delivery", {}).get(entry_id)
         item["history_delivery"] = hass.data.get(f"{DOMAIN}_history_delivery", {}).get(entry_id)
         try:
+            from .cost_reconcile_supervisor import status as cost_repair_status
+            item["cost_repair"] = await cost_repair_status(hass, entry)
+        except Exception as err:
+            _LOGGER.warning("Cost repair status unavailable: %s", err)
+            item["cost_repair"] = {"status": "unavailable", "last_error": str(err)[:150]}
+        try:
             from .gap_repair_runtime import preview_gaps
             item["energy_gap_previews"] = await preview_gaps(hass, importer)
             item["energy_gap_scan_error"] = None
@@ -343,7 +350,10 @@ async def ws_save_settings(hass, connection, msg) -> None:
             "message": "Historical migration is running. Finish it before editing settings.",
         })
         return
-    if hass.data.get(f"{DOMAIN}_cost_reconcile_active", {}).get(entry.entry_id):
+    if (
+        hass.data.get(f"{DOMAIN}_cost_reconcile_active", {}).get(entry.entry_id)
+        or hass.data.get(f"{DOMAIN}_cost_reconcile_jobs", {}).get(entry.entry_id, {}).get("status") == "running"
+    ):
         connection.send_result(msg["id"], {
             "saved": False, "message": "A cost reconciliation is in progress. Finish it before editing tariffs.",
         })
@@ -464,6 +474,12 @@ async def ws_repair_historical_gap(hass, connection, msg) -> None:
             "repaired": False, "message": "The selected meter is unavailable.",
         })
         return
+    if hass.data.get(f"{DOMAIN}_cost_reconcile_jobs", {}).get(msg["entry_id"], {}).get("status") == "running":
+        connection.send_result(msg["id"], {
+            "repaired": False,
+            "message": "A full-period cost repair is running. Finish it before changing historical energy.",
+        })
+        return
     try:
         from .gap_repair_runtime import repair_gap
         result = await repair_gap(hass, msg["entry_id"], requested)
@@ -502,7 +518,11 @@ async def ws_cost_reconcile_preview(hass, connection, msg) -> None:
         plan = await preview_cost_reconciliation(
             hass, matches[0], msg["start_date"], msg["end_date"],
         )
-        connection.send_result(msg["id"], {"ok": True, "plan": plan})
+        # Keep the original signed row plan on the server. A full contract
+        # can contain thousands of hours; the UI only needs summaries.
+        connection.send_result(msg["id"], {
+            "ok": True, "plan": {k: v for k, v in plan.items() if k != "rows"},
+        })
     except Exception as err:
         _LOGGER.warning("PalPulse cost reconciliation preview refused: %s", err)
         connection.send_result(msg["id"], {
@@ -537,8 +557,8 @@ async def ws_cost_reconcile_apply(hass, connection, msg) -> None:
         })
         return
     try:
-        from .cost_reconcile_runtime import apply_cost_reconciliation
-        result = await apply_cost_reconciliation(
+        from .cost_reconcile_supervisor import launch
+        result = await launch(
             hass, matches[0], msg["start_date"], msg["end_date"],
             msg["digest"],
         )
@@ -547,6 +567,38 @@ async def ws_cost_reconcile_apply(hass, connection, msg) -> None:
         _LOGGER.exception("PalPulse cost reconciliation refused/failed")
         connection.send_result(msg["id"], {
             "applied": False, "message": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): COST_RESUME_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_cost_reconcile_resume(hass, connection, msg) -> None:
+    """Resume an existing journal by its saved plan, never user-edited dates."""
+    matches = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == msg["entry_id"]
+    ]
+    if len(matches) != 1 or not msg["confirm"]:
+        connection.send_result(msg["id"], {
+            "started": False, "message": "Select a meter and confirm resumption",
+        })
+        return
+    try:
+        from .cost_reconcile_supervisor import launch
+        result = await launch(
+            hass, matches[0], None, None, None, resume=True,
+        )
+        connection.send_result(msg["id"], result)
+    except Exception as err:
+        _LOGGER.exception("PalPulse cost repair resume refused")
+        connection.send_result(msg["id"], {
+            "started": False, "message": f"{type(err).__name__}: {err}"[:500],
         })
 
 
@@ -562,4 +614,5 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_repair_historical_gap)
     websocket_api.async_register_command(hass, ws_cost_reconcile_preview)
     websocket_api.async_register_command(hass, ws_cost_reconcile_apply)
+    websocket_api.async_register_command(hass, ws_cost_reconcile_resume)
     hass.data[key] = True

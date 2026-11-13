@@ -148,6 +148,14 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(runtime, "async_add_external_statistics", write),
             patch.object(runtime, "get_instance", lambda hass: FakeRecorder()),
             patch.object(runtime, "Store", MockStore),
+            patch.object(
+                importlib.import_module("custom_components.palpulse.cost_reconcile_supervisor"),
+                "Store", MockStore,
+            ),
+            patch.object(
+                importlib.import_module("custom_components.palpulse.cost_reconcile_supervisor"),
+                "get_instance", lambda hass: FakeRecorder(),
+            ),
         ]
         for item in self.patches:
             item.start()
@@ -163,6 +171,161 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.hass, self.entry,
             "2026-11-09", "2026-11-09", digest,
         )
+
+    async def test_month_long_range_is_applied_in_one_background_job(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        start, end = billing.billing_range(
+            "2026-10-15", "2026-11-12", ZONE.key,
+            today=date(2026, 11, 13),
+        )
+        self.start, self.end = start, end
+        self.energy_rows.clear()
+        self.energy_rows[start - 3600] = {
+            "start": start - 3600, "sum": 900.0, "state": 99.0,
+            "change": 0.0,
+        }
+        for index, stamp in enumerate(range(start, end, 3600)):
+            self.energy_rows[stamp] = {
+                "start": stamp, "sum": 900.0 + (index + 1) * 2.,
+                "state": 99.0 + (index + 1) * 2., "change": 2.,
+            }
+        self.cost_rows.clear()
+        self.cost_rows[end - 3600] = {
+            "start": end - 3600, "sum": 2.65, "state": 2.65,
+        }
+        self.writer._last_hour = end - 3600
+        self.entry.options["tariff_versions"] = tariffs.upsert_tariff_version(
+            self.entry.options["tariff_versions"],
+            "2026-09-15", self.entry.options, ZONE.key,
+            today=date(2026, 11, 13),
+        )
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        plan = await runtime.preview_cost_reconciliation(
+            self.hass, self.entry, "2026-10-15", "2026-11-12",
+        )
+        self.assertGreater(len(plan["rows"]), 14 * 24)
+        result = await supervisor.launch(
+            self.hass, self.entry, "2026-10-15", "2026-11-12",
+            plan["digest"],
+        )
+        self.assertTrue(result["started"])
+        await asyncio.gather(*spawned)
+        done = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(done["status"], "complete")
+        self.assertEqual(done["rows_committed"], len(plan["rows"]))
+        self.assertAlmostEqual(
+            self.cost_rows[end - 3600]["sum"], plan["last_sum"], places=5,
+        )
+        self.manager._backup.assert_awaited_once()
+
+    async def test_whole_contract_background_repair_keeps_progress(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        plan = await self.preview()
+        result = await supervisor.launch(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            plan["digest"],
+        )
+        self.assertTrue(result["started"])
+        self.assertEqual(
+            (await supervisor.status(self.hass, self.entry))["status"],
+            "running",
+        )
+        await asyncio.gather(*spawned)
+        done = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(done["status"], "complete")
+        self.assertEqual(done["rows_committed"], 24)
+        self.assertEqual(done["total_rows"], 24)
+        self.assertAlmostEqual(self.writer._sum, 10.34297, places=5)
+
+    async def test_obsolete_no_write_journal_replaced_automatically(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        from copy import deepcopy
+        old = await self.preview()
+        key = f"palpulse_cost_reconcile_{MAC}"
+        MockStore.VALUES[key] = {
+            "status": "prepared",
+            "start_date": "2026-11-05",
+            "end_date": "2026-11-08",
+            "digest": "a" * 64,
+            "backup_id": "old-verified-backup",
+            "plan": deepcopy(old),
+            "rows_committed": 0,
+            "settings_revision": "stale-revision",
+        }
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        result = await supervisor.launch(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            old["digest"],
+        )
+        self.assertTrue(result["started"])
+        await asyncio.gather(*spawned)
+        self.assertEqual(MockStore.VALUES[key]["status"], "complete")
+        self.manager._backup.assert_awaited_once()
+        self.assertAlmostEqual(self.writer._sum, 10.34297, places=5)
+
+    async def test_prior_partially_changed_cost_repair_cannot_be_abandoned(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        key = f"palpulse_cost_reconcile_{MAC}"
+        MockStore.VALUES[key] = {
+            "status": "writing",
+            "start_date": "2026-11-05",
+            "end_date": "2026-11-08",
+            "digest": "a" * 64,
+            "backup_id": "old-verified-backup",
+            "plan": old,
+            "rows_committed": 0,
+        }
+        self.cost_rows[self.end - 3600]["sum"] = 8.0
+        result = await supervisor.launch(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            old["digest"],
+        )
+        self.assertFalse(result["started"])
+        self.assertTrue(result["resume_required"])
+        self.assertEqual(MockStore.VALUES[key]["status"], "writing")
+        self.manager._backup.assert_not_awaited()
+
+    async def test_old_partial_journal_resumes_from_saved_preview(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        resumed = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertTrue(resumed["started"])
+        await asyncio.gather(*spawned)
+        status = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(status["status"], "complete")
+        self.manager._backup.assert_awaited_once()
+        self.manager._verify_prior_backup.assert_awaited_once()
 
     async def test_rebuilds_both_state_and_sum_after_backup(self):
         plan = await self.preview()
