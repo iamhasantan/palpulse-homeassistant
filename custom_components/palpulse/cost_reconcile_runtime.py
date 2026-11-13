@@ -108,6 +108,87 @@ async def preview_cost_reconciliation(
     return result
 
 
+async def _extend_plan_for_live_tail(
+    hass, writer, manager, store, saved: dict,
+    current_costs: dict[int, dict],
+) -> None:
+    """Shift newer live cumulative cost rows by the verified old correction.
+
+    Never reprice an hour outside the original preview. The unchanged hourly
+    differences are preserved, and newer statistics get their own verified
+    Recorder-inclusive backup before their values are touched.
+    """
+    plan = saved["plan"]
+    old_end = int(plan["rows"][-1]["start"])
+    latest = writer._last_hour
+    if latest is None or latest <= old_end:
+        return
+    last_original = next(
+        (item for item in reversed(plan["rows"]) if item.get("old_sum") is not None),
+        None,
+    )
+    if last_original is None:
+        raise ValueError("Cannot extend correction without a trusted monetary anchor")
+    delta = float(plan["last_sum"]) - float(last_original["old_sum"])
+    if not math.isfinite(delta):
+        raise ValueError("Cannot carry forward a nonfinite historical cost change")
+    later = [
+        current_costs[t] for t in sorted(current_costs)
+        if old_end < t <= latest
+    ]
+    if not later or int(later[-1]["start"]) != latest:
+        raise ValueError(
+            "Live cost checkpoint has no matching Recorder row. "
+            "Resume paused without changing newer costs"
+        )
+    if not _equal(later[-1].get("sum"), writer._sum):
+        raise ValueError(
+            "Latest Recorder monetary sum differs from saved live cost checkpoint"
+        )
+    additions = []
+    for row in later:
+        try:
+            old_sum = float(row["sum"])
+            old_state = float(row["state"])
+        except (ValueError, TypeError, OverflowError) as err:
+            raise ValueError("Cannot shift an invalid live cost row") from err
+        if not math.isfinite(old_sum) or not math.isfinite(old_state):
+            raise ValueError("Cannot shift an invalid live cost row")
+        additions.append({
+            "start": int(row["start"]),
+            "old_sum": old_sum, "old_state": old_state,
+            "new_sum": round(old_sum + delta, 9),
+            "new_state": round(old_state + delta, 9),
+            "increment": None, "source": "carry_forward",
+            "kwh": None, "date": None,
+        })
+    # Existing pre-repair backup predates these later live hours.
+    backup_id = await manager._backup("before extending cost reconciliation")
+    await manager._verify_prior_backup(backup_id)
+    confirmed = await _read(
+        hass, (writer.statistic_id,), old_end + HOUR, latest + HOUR,
+    )
+    actual = {
+        int(row["start"]): row
+        for row in confirmed.get(writer.statistic_id, [])
+    }
+    if any(
+        not _equal(actual.get(item["start"], {}).get("sum"), item["old_sum"])
+        or not _equal(actual.get(item["start"], {}).get("state"), item["old_state"])
+        for item in additions
+    ):
+        raise ValueError(
+            "Live cost rows changed while backing them up. "
+            "The earlier repair journal was preserved"
+        )
+    plan["rows"].extend(additions)
+    plan["last_sum"] = additions[-1]["new_sum"]
+    plan["tail_carried_forward"] = True
+    saved.setdefault("tail_backups", []).append(backup_id)
+    await store.async_save(saved)
+    current_costs.update(actual)
+
+
 async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
     *, progress=None,
@@ -145,6 +226,8 @@ async def apply_cost_reconciliation(
             if saved.get("settings_revision") != revision(entry.options):
                 raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
             plan = saved["plan"]
+            for backup_id in saved.get("tail_backups", []):
+                await manager._verify_prior_backup(backup_id)
             if not plan.get("baseline_verified", True):
                 raise ValueError("Saved cost correction has an unverified monetary baseline")
             if not plan.get("repair_safe", False):
@@ -224,12 +307,14 @@ async def apply_cost_reconciliation(
                 energy_id = importer.statistic_id
                 if not plan["rows"]:
                     raise ValueError("No evidenced historical cost rows to reconcile")
-                max_written = int(plan["rows"][-1]["start"])
-                if writer._last_hour is not None and writer._last_hour > max_written:
-                    raise ValueError("Live cost checkpoint advanced past repair range")
+                end_to_read = max(
+                    int(plan["end_utc"]),
+                    int(writer._last_hour + HOUR)
+                    if writer._last_hour is not None else int(plan["end_utc"]),
+                )
                 rows_before = await _read(
                     hass, (energy_id, cost_id),
-                    int(plan["start_utc"]) - HOUR, int(plan["end_utc"]),
+                    int(plan["start_utc"]) - HOUR, end_to_read,
                 )
                 if energy_fingerprint(
                     rows_before.get(energy_id, []),
@@ -242,6 +327,10 @@ async def apply_cost_reconciliation(
                 current_costs = {
                     int(row["start"]): row for row in rows_before.get(cost_id, [])
                 }
+                await _extend_plan_for_live_tail(
+                    hass, writer, manager, store, saved, current_costs,
+                )
+                max_written = int(plan["rows"][-1]["start"])
                 # Entire planned row set is checked before the first write.
                 for item in plan["rows"]:
                     current_row = current_costs.get(int(item["start"]))
@@ -324,10 +413,14 @@ async def apply_cost_reconciliation(
                 # new cost statistic. A restart must not restore the old sum.
                 writer._last_hour = max_written
                 writer._sum = float(plan["last_sum"])
-                if plan["last_supply_date"]:
-                    writer._last_supply_date = plan["last_supply_date"]
-                writer._free_used = dict(plan["free_used"])
-                writer._free_uncertain_dates.update(plan["free_uncertain_dates"])
+                if not plan.get("tail_carried_forward"):
+                    if plan["last_supply_date"]:
+                        writer._last_supply_date = plan["last_supply_date"]
+                    writer._free_used = dict(plan["free_used"])
+                    writer._free_uncertain_dates.update(plan["free_uncertain_dates"])
+                # If later hours were preserved, retain the writer's live
+                # daily supply/free-cap state rather than restoring stale
+                # values from the original historical preview.
                 # Every retired pending job now has a verified Recorder cost
                 # row in the confirmed batch. Never discard a job whose
                 # original hour was missing or could not be priced.
