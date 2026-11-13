@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Automatic history ACK by default:** Resolve the correct ESPHome per-meter ACK action using the firmware's exact FNV-1a MAC identity, without manual settings for new or existing installations. Recheck when ESPHome services register after startup, and refuse ambiguous matching devices.
+- **Explicit opt-out checkbox:** Settings now offers **Disable automatic history acknowledgements**, unchecked by default. Existing explicitly configured actions keep working, and an advanced manual override remains for special setups.
+- **Recovery diagnostics:** Display effective action, discovery status and missing-action warnings. Automatic and manual checkpoint replay use the currently resolved action, not only previously saved manual configuration.
+- **No metering reset:** The change does not modify Powerpal NVS, durable ACK timestamp, Recorder statistics or monetary repair journals. Compatible ESPHome firmware still needs `history_events: true`, `reliable_history: true`, `api.homeassistant_services: true` and `api.custom_services: true`.
+
 ## 0.4b2
 
 ### Missing cost recovery
