@@ -132,17 +132,13 @@ class MissingCostPlanTests(unittest.TestCase):
         } for i in range(38)]
         self.assertEqual(self.plan()["status"], "nothing_to_repair")
 
-    def test_latest_unchanged_original_snapshot_digest(self):
-        self.assertEqual(self.plan()["digest"], self.plan()["digest"])
-        self.cost[10]["sum"] += 0.1
-        self.assertNotEqual(self.plan()["digest"], plans.build_missing_cost_plan(
-            self.energy,
-            [
-                *(row for row in self.cost if row["start"] != self.after_gap),
-                {**self.cost[10], "sum": self.cost[10]["sum"] - .1},
-            ],
-            self.versions, ZONE.key, last_costed_hour=self.origin+37*H
-        )["digest"])
+    def test_stale_recorder_snapshot_changes_digest(self):
+        before = self.plan()["digest"]
+        for row in self.cost[10:]:
+            row["sum"] += .1
+            row["state"] += .1
+        after = self.plan()["digest"]
+        self.assertNotEqual(before, after)
 
 
 if __name__ == "__main__":
