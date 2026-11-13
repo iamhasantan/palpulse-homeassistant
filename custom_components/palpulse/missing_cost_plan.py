@@ -174,6 +174,18 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
             if old_change is not None and abs(old_change - float(expected)) < EPS:
                 candidate = stamp
                 break
+        # If a day already has original cost rows but no row proves
+        # whether the supply fee was applied, adding it again could double
+        # bill. Refuse instead of guessing its placement.
+        has_original = any(
+            stamp in costs and meta[stamp]["day"] == day
+            for stamp in range(first, end + HOUR, HOUR)
+        )
+        if has_original and candidate is None:
+            raise ValueError(
+                f"Daily supply charge on {day} cannot be located in the "
+                "original monetary rows; manual review required"
+            )
         supply_owner[day] = candidate if candidate is not None else first
 
     running = Decimal(str(anchor_sum))
