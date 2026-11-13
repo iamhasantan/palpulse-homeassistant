@@ -237,6 +237,26 @@ async function click(fields) {
             "hiding advanced controls must also hide the old tab");
   await click({ "advanced-history": "" });
 
+  // ACK is automatically discovered and enabled without manual action setup.
+  state.meters[0].energy.ack_enabled = true;
+  state.meters[0].energy.ack_service = "esphome.powerpal_proxy_palpulse_ack_8fed36da";
+  state.meters[0].energy.ack_resolution = "Automatically discovered";
+  await click({ tab: "settings" });
+  assert.ok(panel.shadowRoot.innerHTML.includes('data-setting="history_ack_disabled"'),
+            "The user must have a simple opt-out checkbox");
+  assert.ok(panel.shadowRoot.innerHTML.includes("Automatically discovered"));
+  panel.shadowRoot.fields = [{
+    dataset: { setting: "history_ack_disabled" },
+    type: "checkbox", checked: true,
+  }];
+  panel.shadowRoot.listeners.get("change")({ target: panel.shadowRoot.fields[0] });
+  panel.shadowRoot.fields = [];
+  await click({ "settings-save": "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/save_settings"
+    && x.changes.history_ack_disabled === true),
+    "ACK opt-out must be saved explicitly, never inferred from an empty manual action");
+  panel.shadowRoot.fields = [];
+
   // Inline editing must submit to the guarded WebSocket endpoint,
   // rather than navigating away or silently altering source state.
   await click({ tab: "electricity" });
