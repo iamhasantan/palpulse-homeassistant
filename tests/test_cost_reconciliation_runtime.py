@@ -152,6 +152,10 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("custom_components.palpulse.cost_reconcile_supervisor"),
                 "Store", MockStore,
             ),
+            patch.object(
+                importlib.import_module("custom_components.palpulse.cost_reconcile_supervisor"),
+                "get_instance", lambda hass: FakeRecorder(),
+            ),
         ]
         for item in self.patches:
             item.start()
