@@ -21,7 +21,7 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.recorder import get_instance
 
@@ -90,6 +90,62 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     history_delivery = hass.data.setdefault(f"{DOMAIN}_history_delivery", {}).setdefault(
         entry.entry_id, {"received_count": 0, "last_event_at": None}
     )
+    # ESPHome can emit recovered minutes before Recorder is fully available.
+    # Buffer their original event payloads in order until HA has started.
+    # A single entry-lifetime worker processes them sequentially so a large
+    # replay doesn't spawn tracked startup tasks or hold up bootstrap.
+    incoming: asyncio.Queue[dict] = asyncio.Queue()
+    started = asyncio.Event()
+    if hass.is_running:
+        started.set()
+    else:
+        @callback
+        def _on_started(_event: Event) -> None:
+            started.set()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        )
+
+    async def _consume_events() -> None:
+        await started.wait()
+        while True:
+            data = await incoming.get()
+            try:
+                await importer.async_receive(data)
+            except Exception:
+                # The importer journals its inputs and protects the cursor.
+                # Never lose the entire event worker on an unexpected record.
+                _LOGGER.exception(
+                    "PalPulse incoming history worker failed for %s", meter
+                )
+            finally:
+                incoming.task_done()
+
+    async def _start_recovery() -> None:
+        # No Recorder write or async_block_till_done during HA bootstrap.
+        await started.wait()
+        try:
+            await importer.async_start()
+        except Exception:
+            _LOGGER.exception("PalPulse energy recovery could not start")
+        if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
+            try:
+                await cost_recorder.async_start()
+            except Exception:
+                _LOGGER.exception("PalPulse cost recovery could not start")
+
+    # Config-entry background tasks do not block HA startup and are cancelled
+    # on unload; this is critical because imports wait for durable Recorder
+    # confirmation before advancing any meter/cost checkpoint.
+    entry.async_create_background_task(
+        hass, _start_recovery(), f"PalPulse deferred recovery {meter}",
+        eager_start=False,
+    )
+    entry.async_create_background_task(
+        hass, _consume_events(), f"PalPulse incoming minute events {meter}",
+        eager_start=False,
+    )
 
     @callback
     def _receive(event: Event) -> None:
@@ -100,7 +156,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             return
         history_delivery["received_count"] += 1
         history_delivery["last_event_at"] = int(time.time())
-        hass.async_create_task(importer.async_receive(event.data))
+        incoming.put_nowait(dict(event.data))
 
     unsub = hass.bus.async_listen(EVENT_TYPE, _receive)
     entry.async_on_unload(unsub)
@@ -145,20 +201,8 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.BUTTON, Platform.SENSOR]
     )
-    # Recover already-journalled measurements on boot and periodically. It
-    # must not require a new ESP32 event to finish a delayed BLE batch.
-    try:
-        await importer.async_start()
-    except Exception:
-        _LOGGER.exception("PalPulse energy recovery could not start")
-    if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
-        # Retry durable cost jobs independently of new meter events. A quiet
-        # ESP32 must not leave an earlier Recorder failure stuck forever.
-        try:
-            await cost_recorder.async_start()
-        except Exception:
-            _LOGGER.exception("PalPulse cost recovery could not start")
-
+    # Pending energy and cost recovery is started by an entry-lifetime
+    # background task after HA reaches its started state, not during setup.
     # Optional sidebar is isolated from metering. Failure must not interrupt
     # existing installations or historical migration safety.
     if getattr(hass, "http", None) is not None:
@@ -541,7 +585,7 @@ class PalPulseImporter:
                 "hour", {"energy": "kWh"}, {"state", "sum"},
             ).get(self.statistic_id, [])
 
-        return await self.hass.async_add_executor_job(read)
+        return await get_instance(self.hass).async_add_executor_job(read)
 
     async def async_integrity_report(self, lookback_hours: int = 96) -> dict:
         """Read-only scan for discontinuities in recent energy statistics."""
@@ -558,7 +602,7 @@ class PalPulseImporter:
                 "hour", {"energy": "kWh"}, {"state", "sum"},
             ).get(self.statistic_id, [])
 
-        rows = await self.hass.async_add_executor_job(read)
+        rows = await get_instance(self.hass).async_add_executor_job(read)
         return {
             "statistic_id": self.statistic_id,
             "hour_count": len(rows),
@@ -887,7 +931,9 @@ class PalPulseImporter:
         # Store cursor, so an HA restart can't leave a committed cursor with
         # a missing corresponding statistic.
         async_add_external_statistics(self.hass, metadata, rows)
-        await get_instance(self.hass).async_block_till_done()
+        await asyncio.wait_for(
+            get_instance(self.hass).async_block_till_done(), timeout=180
+        )
 
     def _prune(self, now: int) -> None:
         cutoff = now - MAX_BACKFILL_AGE
