@@ -1,0 +1,51 @@
+name: Publish PalPulse 0.4b2
+on:
+  push:
+    branches:
+      - release/0.4b2-publish
+    paths:
+      - .github/workflows/publish-0.4b2.yml
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Verify tested main commit and version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=5f7929d43e554a77c6089b3c339514d851f71499
+          actual="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$actual" = "$expected" || { echo 'Main moved; release aborted' >&2; exit 1; }
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/manifest.json?ref=main" --jq '.content' | base64 --decode | jq -r '.version')"
+          test "$version" = '0.4b2'
+      - name: Publish GitHub release for Marketplace
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view 0.4b2 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to replace it'
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          ## PalPulse 0.4b2 (experimental beta)
+          **Missing cost self-healing and audit**
+          - New guided missing cost assessment under PalPulse > Hourly history, separate from full historical reconciliation.
+          - Independently price missing cost entries from proven Recorder hourly kWh and the historical tariff, including 15-kWh capped free windows.
+          - Preserve existing hourly charges, verify independent monetary counter evidence, and safely rebase both state and cumulative sum through later cost rows.
+          - Require a completed Recorder-inclusive Home Assistant backup before corrections. Persist an audit journal and verify every 12-hour batch; interrupted writes resume without double billing.
+          - Small fully evidenced gaps may self-heal automatically when no legacy repair conflicts. Large gaps and previous paused corrections require explicit confirmation.
+          - Existing old repair plans and backups are retained, with supersession documented only after successful verification.
+          - Automated regression and Home Assistant HACS/hassfest checks passed.
+
+          **Minimum Home Assistant Core:** 2026.11.1.
+          **Backup warning:** This is an experimental beta, not a billing-grade tool. Verify a complete backup including Recorder before updating, and review the read-only cost preview before applying a large historical correction. No missing kWh are guessed.
+          NOTES
+          gh release create 0.4b2 --repo "$GITHUB_REPOSITORY" \
+            --target 5f7929d43e554a77c6089b3c339514d851f71499 \
+            --title 'PalPulse 0.4b2 (experimental beta)' \
+            --notes-file "$RUNNER_TEMP/release-notes.md" --latest
