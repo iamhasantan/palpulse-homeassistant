@@ -130,6 +130,15 @@ const fakeHass = {
     if (message.type === "palpulse/save_settings") {
       return { saved: true, message: "Settings saved", settings_revision: "version-two" };
     }
+    if (message.type === "palpulse/missing_cost_preview") {
+      return { status: "ready", digest: "d".repeat(64),
+               missing_hours: 3, missing_charges: 1.42,
+               preserved_existing_hours: 14, reason: "Verified" };
+    }
+    if (message.type === "palpulse/missing_cost_apply") {
+      return { applied: true, missing_hours: 3,
+               message: "Verified missing costs restored" };
+    }
     if (message.type === "palpulse/cost_reconcile_preview") {
       return { ok: true, plan: {
         digest: "c".repeat(64), verified_hours: 4, retained_hours: 0,
@@ -251,6 +260,16 @@ async function click(fields) {
   assert.equal(save.changes.free_excess_cents_per_kwh, "19.75");
   assert.ok(effects.navigate.length === 0, "saving must stay inside sidebar");
   panel.shadowRoot.fields = [];
+
+  // Missing-cost repair must remain visible without opening legacy history.
+  await click({ tab: "history" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Self-heal missing electricity costs"));
+  await click({ "missing-cost-preview": "" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Provable missing cost hours"));
+  await click({ "missing-cost-apply": "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/missing_cost_apply"
+    && x.confirm === true && x.digest === "d".repeat(64)),
+    "missing-cost apply must preserve reviewed digest and demand confirmation");
 
   // Historical reconciliation is explicitly previewed in the sidebar,
   // and Apply sends the precise verified digest with confirmation.
