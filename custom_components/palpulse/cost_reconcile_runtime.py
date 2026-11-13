@@ -326,6 +326,7 @@ async def _rebase_changed_energy(
         "previous_repair_archive": archive_key,
         "previous_repair_digest": saved["digest"],
         "previous_repair_backup": saved["backup_id"],
+        "rebased_from_partial": bool(saved.get("rows_committed", 0)),
         "rebase_previous_targets": previous_targets,
         "rebase_summary": {
             "changed_hours": assessment["affected_count"],
@@ -679,6 +680,7 @@ async def apply_cost_reconciliation(
             store is not None and isinstance(saved, dict)
             and saved.get("status") == "prepared"
             and not saved.get("rows_committed")
+            and not saved.get("rebased_from_partial")
         ):
             saved["status"] = "aborted"
             try:
