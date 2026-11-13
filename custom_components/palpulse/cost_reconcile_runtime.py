@@ -26,6 +26,7 @@ from .tariff_history import (
     CONF_TARIFF_VERSIONS, captured_tariff, validate_versions,
 )
 from .panel_settings import revision
+from .cost_reconcile_legacy_audit import audit_legacy_repair
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -230,11 +231,7 @@ async def apply_cost_reconciliation(
                 await manager._verify_prior_backup(backup_id)
             if not plan.get("baseline_verified", True):
                 raise ValueError("Saved cost correction has an unverified monetary baseline")
-            if not plan.get("repair_safe", False):
-                raise ValueError(
-                    "Saved cost correction has unverified legacy counter breaks. "
-                    "Review the conflict hours before any Recorder writes"
-                )
+            legacy_needs_audit = not plan.get("repair_safe", False)
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
             if plan["digest"] != digest:
@@ -324,6 +321,20 @@ async def apply_cost_reconciliation(
                         "Meter energy changed since this cost plan was prepared. "
                         "Do not resume a stale correction; review the saved journal"
                     )
+                if incomplete and legacy_needs_audit:
+                    # Older, partially committed journals predate the newer
+                    # repair_safe field. Never treat absence as proof of
+                    # danger or permission to bypass safety. Independently
+                    # rebuild their ORIGINAL cost plan from the preserved
+                    # pre-write rows, complete Recorder energy and dated
+                    # tariff before writing any more monetary statistics.
+                    saved["legacy_audit"] = audit_legacy_repair(
+                        plan,
+                        rows_before.get(energy_id, []),
+                        entry.options.get(CONF_TARIFF_VERSIONS, []),
+                        zone_name=hass.config.time_zone,
+                    )
+                    await store.async_save(saved)
                 current_costs = {
                     int(row["start"]): row for row in rows_before.get(cost_id, [])
                 }
