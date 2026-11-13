@@ -231,7 +231,23 @@ async def apply_cost_reconciliation(
                 await manager._verify_prior_backup(backup_id)
             if not plan.get("baseline_verified", True):
                 raise ValueError("Saved cost correction has an unverified monetary baseline")
-            legacy_needs_audit = not plan.get("repair_safe", False)
+            # An EXPLICIT unsafe verdict is not a legacy format issue and
+            # must never be overridden by reconstructing an incomplete
+            # original snapshot. Only absence of the flag (0.3b1/0.3b2)
+            # can be upgraded after a full independent audit.
+            if plan.get("repair_safe") is False:
+                breaks = plan.get("blocking_conflicts") or []
+                first = breaks[0] if breaks else None
+                detail = (
+                    f" First unverified UTC hour {first['start']}: "
+                    f"{first['reason']}" if first else ""
+                )
+                raise ValueError(
+                    f"Saved repair explicitly flagged {len(breaks)} unsafe "
+                    f"legacy cost-counter break(s).{detail} The {int(saved.get('rows_committed', 0))} "
+                    "already-written hours and backup remain untouched"
+                )
+            legacy_needs_audit = "repair_safe" not in plan
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
             if plan["digest"] != digest:
