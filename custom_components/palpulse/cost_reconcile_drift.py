@@ -110,11 +110,27 @@ def audit_changed_energy(saved: dict, energy: list[dict],
             "changed_hours": [], "affected_count": 0,
         }
     same_target = not changed
+    # A changed monetary target is only defensible when genuinely metered
+    # energy and the dated tariff prove its new charge. Legacy-retained
+    # prices are never treated as independent evidence of recovered usage.
+    unsupported_changed = [
+        stamp for stamp in sorted(set(expected) | set(current))
+        if (
+            (stamp not in expected or stamp not in current or
+             current[stamp].get("source") not in ("verified", "recorded_sum"))
+            and (
+                stamp not in expected or stamp not in current or
+                not same(expected[stamp].get("new_sum"), current[stamp].get("new_sum"))
+                or expected[stamp].get("source") != current[stamp].get("source")
+            )
+        )
+    ]
     return {
         "status": "equivalent" if same_target else "material_change",
         "can_replan": (
             bool(new.get("repair_safe"))
             and bool(new.get("baseline_verified"))
+            and not unsupported_changed
             and all(stamp in current for stamp in expected)
         ),
         "same_targets": same_target,
@@ -122,6 +138,7 @@ def audit_changed_energy(saved: dict, energy: list[dict],
         "changed_hours": changed[:40],
         "missing_energy_hours": new["missing_energy_hours"],
         "blocked_conflicts": len(new.get("blocking_conflicts", [])),
+        "unverified_changed_hours": len(unsupported_changed),
         "digest": current_digest,
         "reason": (
             "Energy changed, but every saved hourly charge remains identical. "
