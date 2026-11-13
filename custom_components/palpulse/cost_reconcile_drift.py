@@ -141,12 +141,17 @@ def audit_changed_energy(saved: dict, energy: list[dict],
         "unverified_changed_hours": len(unsupported_changed),
         "digest": current_digest,
         "reason": (
+            f"{len(unsupported_changed)} changed hour(s) have missing or "
+            "unverified electricity evidence. Restore provable missing "
+            "energy in Hourly history, or manually review these hours. "
+            "The existing cost repair remains untouched"
+            if unsupported_changed else
             "Energy changed, but every saved hourly charge remains identical. "
-            "The old plan can be safely revalidated"
+            "The original plan can be independently revalidated"
             if same_target else
-            f"{len(changed)} cost hour(s) now differ. Rebuild the original "
-            "cost repair from current energy and verify another backup before "
-            "changing any more monetary rows"
+            f"{len(changed)} cost hour(s) now differ. A separately confirmed "
+            "Recorder backup and independently repriced repair can correct "
+            "them without discarding previously verified rows"
         ),
         "_plan": new,
     }
