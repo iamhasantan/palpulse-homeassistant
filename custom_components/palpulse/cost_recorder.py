@@ -374,7 +374,7 @@ class PalPulseCostRecorder:
                 {},
                 {"sum", "state"},
             ).get(source_id, [])
-        return await self.hass.async_add_executor_job(work)
+        return await get_instance(self.hass).async_add_executor_job(work)
 
     async def _recover_verified_unjournalled_hours(
         self, missing: list[dict], next_hour: int,

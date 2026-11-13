@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.3b8
+
+### What's Changed
+
+- **Home Assistant 2026.11.1 bootstrap timeout fixed.** PalPulse no longer awaits pending energy import inside its config-entry setup. Home Assistant's Recorder could be waiting on startup while PalPulse was itself waiting for Recorder, leading to a stage-2 bootstrap cancellation and a red **Failed to set up** integration card. Metering and cost recovery now run in entry-owned background jobs only after Home Assistant reports it has started, or immediately on reload if it is already running.
+- **Incoming ESPHome minutes preserved and ordered during startup.** A single config-entry lifetime event worker queues original Powerpal measurement payloads FIFO during HA bootstrap. The worker starts after HA is running and invokes the existing guarded durable importer. No event is acknowledged before processing; meter and cost cursors, pending Store records, and historical repair journals are unchanged by this startup fix. Config-entry background tasks are cancelled on unload.
+- **No startup-blocking event task pile-up.** Each incoming ESPHome event is added to the in-memory FIFO instead of launching a normal Home Assistant startup-tracked task that waits behind a Recorder lock.
+- **Independent cost recovery.** The persistent electricity-cost writer resumes in its own entry-lifetime task, so a long energy backlog does not delay cost retry scheduling.
+- **Use Recorder's database executor.** The exact reads flagged by Home Assistant at `__init__.py:539` and `cost_recorder.py:368`, plus the energy integrity scan, now use `get_instance(hass).async_add_executor_job`. Neither the default executor nor the event loop is appropriate for synchronous Recorder statistics.
+- **Bounded Recorder wait.** Import confirmation now fails after 180 seconds rather than awaiting Recorder forever; the durable energy cursor is not advanced without read-after-write confirmation. Further retry follows the existing ledger safety checks.
+- **Regression coverage.** Startup returns even while a simulated Recorder recovery stalls; early ESPHome events remain queued until HA starts; the existing Recorder-failure cursor invariants are retained.
+
+### Safety and acceptance
+
+Requires **Home Assistant Core 2026.11.1 or newer**. This release does not reset ESP32 NVS, delete pending energy history, modify original cost-repair journals, or silently write historical cost corrections. ESPHome reliable-history delivery is recommended for restart durability. Test coverage cannot reproduce the user's actual HAOS Recorder load, so verify startup and last imported hour after updating.
+
+
 ## 0.3b7
 
 ### What's Changed
