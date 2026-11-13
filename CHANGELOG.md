@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.3b7
+
+### What's Changed
+
+- **One guided fix for energy changed since cost preview.** A failed historical cost repair now offers **Assess and fix changed energy** in the PalPulse Cost reconciliation tab. This performs a read-only comparison of the original, saved monetary snapshots with currently recorded hourly meter energy and the saved contract-effective tariff, listing the changed dates, hours and costs.
+- **Automatically recover when independently verifiable.** If all original planned monetary hours still have verifiable evidence and the reconstructed plan is safe, an administrator may explicitly confirm **Back up, rebuild and continue safely**. PalPulse verifies a *new* Recorder-inclusive backup and all original/previously written monetary rows, creates an immutable archived copy of the earlier journal and original backup, then rebuilds and resumes only its own cumulative cost statistics from the newest energy snapshot. Earlier written rows can be adjusted again without double billing.
+- **No guesswork or unsafe automatic writes.** No backup or monetary write is attempted if the energy review is stale, an original Recorder cost was independently changed, meter/contract data cannot support repricing or a new billing hour's existing cost was not covered by the original snapshot. Missing historical readings remain missing rather than being assumed free. Explicitly unsafe original plans cannot be bypassed.
+- **Restart-resilient revision history.** A rebased journal retains its original plan/archive, previous approved monetary targets and old backup reference. This allows later interrupted writes to be verified against the original and earlier approved values before any retry. Prepared-but-rebased journals with previously committed rows are never auto-aborted by the ordinary unused-preview cleanup.
+- **Clearer dashboard recovery.** Shows affected local hours, prior and revised charges, missing data counts, and a confirmation step. If full auto-fix is unsafe it explains what evidence is missing, pointing to the Hourly history recovery before reassessment.
+- **Regression tests.** Simulated 12/24 partial repairs with recovered meter history, financially equivalent Recorder metadata changes, stale approval rejection, original cost tampering, missing source energy, and new-backup failure protection, plus browser action tests.
+
+### Safety and acceptance notes
+
+Requires **Home Assistant 2026.11.1**. This is an experimental, backup-first historical monetary repair feature. It never resets NVS, the meter or historical energy. The repair stops if current Recorder evidence cannot be reconciled with the original frozen journal, and still requires explicit user approval for monetary changes. The real Home Assistant Recorder must be checked after installation; CI does not establish that the user's incomplete 12/66-hour repair has finished.
+
+
 ## 0.3b6
 
 ### What's Changed
