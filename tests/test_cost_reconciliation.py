@@ -122,6 +122,21 @@ class CostReconciliationTests(unittest.TestCase):
             self.versions, start, end, zone_name=MELB.key,
         )
 
+    def test_full_saved_contract_range_not_limited_to_fourteen_days(self):
+        start, end = reconcile.billing_range(
+            "2026-09-15", "2026-11-12", MELB.key,
+            today=date(2026, 11, 13),
+        )
+        self.assertGreater((end-start) // 3600, 14 * 24)
+        self.assertEqual(
+            datetime.fromtimestamp(start, timezone.utc).astimezone(MELB).date(),
+            date(2026, 9, 15),
+        )
+        self.assertEqual(
+            datetime.fromtimestamp(end, timezone.utc).astimezone(MELB).date(),
+            date(2026, 11, 13),
+        )
+
     def test_november_9_free_and_peak_are_not_offpeak(self):
         p = self.plan("2026-11-09")
         self.assertEqual(p["verified_hours"], 24)
