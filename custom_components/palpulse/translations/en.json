@@ -281,13 +281,15 @@
         }
       },
       "history_transport": {
-        "title": "Reliable history delivery (preview)",
-        "description": "Optional. If your ESPHome firmware has **reliable_history: true**, and `api.custom_services: true`, enter its Home Assistant action name, such as `esphome.powerpal_proxy_palpulse_ack_1a2b3c4d`. PalPulse will acknowledge each durable minute so the ESP32 can replay unconfirmed measurements. Leave blank for the older best-effort event path. Back up your device before flashing new firmware.",
+        "title": "Reliable history acknowledgements",
+        "description": "PalPulse automatically discovers and uses the matching ESPHome ACK action for this Powerpal meter. This is enabled by default on compatible ESPHome firmware with `reliable_history: true`, `history_events: true`, `api.homeassistant_services: true` and `api.custom_services: true`. Only disable this when you deliberately want best-effort history, which may stall reliable ESPHome queues. An optional explicit action name is retained as an advanced override.",
         "data": {
-          "history_ack_service": "ESPHome acknowledgment action"
+          "history_ack_service": "Manual ESPHome ACK action (advanced, optional)",
+          "history_ack_disabled": "Disable automatic history acknowledgements"
         },
         "data_description": {
-          "history_ack_service": "Must start with `esphome.` and end with the service name registered by the device."
+          "history_ack_service": "Normally leave blank. PalPulse discovers the correct per-meter action automatically, including after late ESPHome registration.",
+          "history_ack_disabled": "Unchecked by default. Leave unchecked to automatically ACK durable minute records."
         }
       },
       "replace_esp32": {

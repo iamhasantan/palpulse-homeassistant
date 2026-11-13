@@ -358,6 +358,61 @@ class ImporterTests(unittest.IsolatedAsyncioTestCase):
         await self.feed_hour(BASE + 7200, 100)
         self.assertTrue(self.importer._halted)
 
+    async def test_auto_ack_detects_delayed_esphome_registration(self):
+        received = []
+
+        class Services:
+            def __init__(self):
+                self.actions = {}
+            def has_service(self, domain, service):
+                return domain == "esphome" and service in self.actions
+            def async_services(self):
+                return {"esphome": dict(self.actions)}
+            async def async_call(self, domain, service, data, blocking):
+                assert service == "powerpal_proxy_palpulse_ack_8fed36da"
+                assert FakeStore.VALUES[f"palpulse_{MAC}"]["ack_timestamp"] >= data["timestamp"]
+                received.append(data["timestamp"])
+
+        services = Services()
+        self.hass.services = services
+        self.importer = palpulse.PalPulseImporter(self.hass, MAC)
+        await self.importer.async_load()
+        with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+            await self.importer.async_receive(record_event(BASE, 10, 40010))
+            self.assertIsNone(self.importer.health["ack_service"])
+            self.assertEqual(received, [])
+            services.actions["powerpal_proxy_palpulse_ack_8fed36da"] = {}
+            # The ESP32 retries its oldest unacknowledged event.
+            await self.importer.async_receive(record_event(BASE, 10, 40010))
+            await self.importer.async_receive(record_event(BASE + 60, 10, 40020))
+        self.assertEqual(received, [BASE, BASE + 60])
+        self.assertEqual(
+            self.importer.health["ack_service"],
+            "esphome.powerpal_proxy_palpulse_ack_8fed36da",
+        )
+
+    async def test_ack_opt_out_disables_even_explicit_registered_service(self):
+        received = []
+
+        class Services:
+            def has_service(self, domain, service):
+                return True
+            def async_services(self):
+                return {"esphome": {"powerpal_proxy_palpulse_ack_8fed36da": {}}}
+            async def async_call(self, domain, service, data, blocking):
+                received.append(data)
+
+        self.hass.services = Services()
+        self.importer = palpulse.PalPulseImporter(
+            self.hass, MAC, "esphome.powerpal_proxy_palpulse_ack_8fed36da",
+            ack_disabled=True,
+        )
+        await self.importer.async_load()
+        with patch.object(palpulse.time, "time", return_value=BASE + 4 * 3600):
+            await self.importer.async_receive(record_event(BASE, 10, 40010))
+        self.assertEqual(received, [])
+        self.assertEqual(self.importer.health["ack_resolution"], "Disabled by user")
+
     async def test_acknowledges_only_durable_saved_minute(self):
         acknowledgments = []
 

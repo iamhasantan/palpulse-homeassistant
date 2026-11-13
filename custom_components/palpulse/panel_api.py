@@ -129,7 +129,7 @@ def register_checkpoint_listener(hass, entry) -> None:
             ):
                 return
             action = derive_replay_service(
-                str(entry.options.get(CONF_ACK_SERVICE) or "")
+                str(importer.health.get("ack_service") or "")
             )
             if not action or not hass.services.has_service(*action.split(".", 1)):
                 return
@@ -206,7 +206,7 @@ async def ws_panel_info(hass, connection, msg) -> None:
         item = public_meter_summary(entry, importer, writer, migration, cost_migration)
         checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
         enabled, reason = replay_eligible(checkpoint, int(time.time()))
-        action = derive_replay_service(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+        action = derive_replay_service(str(importer.health.get("ack_service") or ""))
         if not action or not hass.services.has_service(*action.split(".", 1)):
             enabled = False
             reason = "Matching ESPHome replay action not installed. Check firmware and ACK action setup."
@@ -304,7 +304,7 @@ async def ws_replay_checkpoint(hass, connection, msg) -> None:
 
     checkpoint = hass.data.get(f"{DOMAIN}_checkpoint", {}).get(entry_id)
     eligible, reason = replay_eligible(checkpoint, int(time.time()))
-    action = derive_replay_service(str(entry.options.get(CONF_ACK_SERVICE) or ""))
+    action = derive_replay_service(str(importer.health.get("ack_service") or ""))
     if not eligible or not action or not hass.services.has_service(*action.split(".", 1)):
         connection.send_result(msg["id"], {
             "accepted": False,

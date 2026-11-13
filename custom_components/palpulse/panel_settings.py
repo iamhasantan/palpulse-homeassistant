@@ -14,7 +14,7 @@ import re
 from collections.abc import Mapping
 
 from .const import (
-    CONF_ACK_SERVICE, CONF_AUTO_LINK_ENERGY_COST, CONF_LEGACY_ENERGY_SOURCE,
+    CONF_ACK_SERVICE, CONF_DISABLE_ACK, CONF_AUTO_LINK_ENERGY_COST, CONF_LEGACY_ENERGY_SOURCE,
     DOMAIN,
 )
 from .tariff_history import (
@@ -38,7 +38,7 @@ NUMERIC = frozenset((
 PRICING = frozenset((CONF_PRICING_MODE, *NUMERIC, *WINDOW_FIELDS))
 EDITABLE = PRICING | frozenset((
     CONF_TARIFF_START,
-    CONF_ACK_SERVICE, CONF_AUTO_LINK_ENERGY_COST,
+    CONF_ACK_SERVICE, CONF_DISABLE_ACK, CONF_AUTO_LINK_ENERGY_COST,
     CONF_LEGACY_ENERGY_SOURCE, COST_SOURCE, COST_SOURCE_MODE,
 ))
 SOURCE_RE = re.compile(r"^(?:sensor\.[a-z0-9_]+|[a-z0-9_]+:[a-z0-9_]+)$")
@@ -54,7 +54,9 @@ def revision(options: Mapping[str, object]) -> str:
 
 def visible_settings(options: Mapping[str, object]) -> dict:
     """Return only explicitly permitted, non-secret editable settings."""
-    return {key: options[key] for key in EDITABLE if key in options}
+    visible = {key: options[key] for key in EDITABLE if key in options}
+    visible.setdefault(CONF_DISABLE_ACK, False)
+    return visible
 
 
 def normalize_settings(
@@ -105,6 +107,10 @@ def normalize_settings(
                 updated[key] = action
             else:
                 updated.pop(key, None)
+        elif key == CONF_DISABLE_ACK:
+            if type(value) is not bool:
+                raise ValueError("Disable acknowledgements must be on or off")
+            updated[key] = value
         elif key == CONF_AUTO_LINK_ENERGY_COST:
             if type(value) is not bool:
                 raise ValueError("Automatic cost linking must be on or off")

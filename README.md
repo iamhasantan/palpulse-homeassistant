@@ -2,7 +2,11 @@
 
 Local electricity monitoring for **Powerpal** meters using an ESP32 and Home Assistant. PalPulse brings live readings, timestamped energy history and optional electricity-cost tracking into Home Assistant without a cloud account.
 
-> **Early preview: 0.4b2.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+> **Early preview: 0.4b3.** PalPulse is still experimental. Expect rough edges, especially around missed measurements, ESP32 replacement and historical imports. **Back up Home Assistant (including Recorder/history) before updating**, and preserve your ESP32 firmware and NVS data before reflashing. Cost estimates are not a substitute for your retailer's bill.
+
+## 0.4b3 automatic acknowledged history
+
+PalPulse now discovers each meter's uniquely matched ESPHome ACK action automatically, by default. No service name entry is needed. Settings contains a **Disable automatic history acknowledgements** checkbox, unchecked unless you explicitly opt out. A registered custom override stays available under Advanced. Compatible ESPHome 0.2b4 firmware is required for reliable delivery. No meter NVS checkpoint or historical Recorder values are reset.
 
 ## 0.4b2 missing-cost recovery
 
@@ -23,12 +27,12 @@ PalPulse keeps its historical energy statistic separate from your existing live 
 You'll need Home Assistant **2026.11.1 or newer**, an ESP32, a supported Powerpal meter, and the companion [PalPulse ESPHome component](https://github.com/iamhasantan/palpulse-esphome). The ESP32 needs to be paired with your meter and connected to Home Assistant.
 
 1. Open **Settings → Marketplace → Add from link** and enter `https://github.com/iamhasantan/palpulse-homeassistant`.
-2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.4b2** under Updates, then restart Home Assistant.
+2. Install **PalPulse for Home Assistant**. If you're upgrading, choose **0.4b3** under Updates, then restart Home Assistant.
 3. Go to **Settings → Devices & services → Add integration → PalPulse for Home Assistant** and enter your Powerpal BLE MAC address.
 4. Enable history events in the companion ESPHome component. On the ESPHome device in Home Assistant, allow the device to perform Home Assistant actions.
 5. Check **PalPulse live history status** before switching your Energy dashboard to the new statistic.
 
-The optional **acknowledged history transport** is a preview feature. It requires matching ESPHome firmware and an additional native-API action setting. Use the [setup and recovery guide](docs/setup-and-recovery.md) before enabling it.
+**Acknowledged history is enabled automatically** when a matching ESPHome ACK action is registered. PalPulse derives the action from the meter's identity, even when ESPHome registers after Home Assistant starts. With supported ESPHome firmware (`reliable_history: true` and `api.custom_services: true`), no manual action name is needed. In PalPulse → Settings, the **Disable automatic history acknowledgements** checkbox is off by default and can opt out deliberately. No action is guessed if multiple matching ESPHome nodes are found. See the [setup and recovery guide](docs/setup-and-recovery.md).
 
 ## PalPulse sidebar dashboard
 
@@ -47,7 +51,7 @@ backups and ESP32 recovery in one place.
 - **ESP32 recovery** shows native-minute event delivery and checkpoint reception diagnostics, then compares the firmware's saved meter and ACK checkpoints
   with Home Assistant's last verified hour. If supported and safe, you can ask
   ESPHome to retry buffered history from its existing acknowledged cursor.
-- **Settings** edits the ESPHome ACK action, automatic verified-cost linking and original energy/cost source identifiers. A started migration locks its source.
+- **Settings** shows the discovered ESPHome ACK action and one opt-out checkbox. An optional manual override is retained under Advanced for unusual installs. Automatic verified-cost linking and migration-source settings remain editable.
 - **Migration** takes you to the existing backup-first Preview, Import, Resume
   and Undo screens. It doesn't bypass their confirmations.
 - **Backups** can request an automatic Home Assistant backup. **Confirm that it
@@ -60,7 +64,7 @@ Powerpal meters separately and doesn't require a manually imported Lovelace
 dashboard.
 
 **Checkpoint replay needs PalPulse ESPHome 0.2b4 or newer**, reliable history
-enabled, and the matching ACK action configured in the Home Assistant
+enabled, and a matching ACK action registered in the Home Assistant
 integration. Earlier ESPHome builds can still record electricity as before,
 but won't provide checkpoint telemetry or the manual replay action. Replaying
 only works while the original minute records remain in the Powerpal's buffer.
@@ -83,7 +87,7 @@ unset Power5 excess rate can adopt the now-confirmed rate only if the remaining
 plan settings match, including the corrected 4-9pm peak windows. Already
 committed historical cost statistics are never silently rewritten.
 
-With a compatible ESPHome build and a configured native ACK action, a fresh,
+With a compatible ESPHome build and an automatically discovered native ACK action, a fresh,
 safe firmware checkpoint can automatically request buffered meter-history
 replay. The normal native ACK sequence protects durable Home Assistant storage
 from lost acknowledgments. This **cannot** restore minutes discarded from the

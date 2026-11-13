@@ -13,7 +13,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_METER_MAC, CONF_ACK_SERVICE, CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID, DOMAIN)
+from .const import (CONF_METER_MAC, CONF_ACK_SERVICE, CONF_DISABLE_ACK, CONF_LEGACY_ENERGY_SOURCE, LEGACY_STATISTIC_ID, DOMAIN)
 from .history import normalize_mac
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
@@ -787,15 +787,19 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_history_transport(self, user_input=None):
-        """Opt in to the ESPHome acknowledged native-API history action."""
+        """Acknowledged history auto-discovery, enabled unless explicitly disabled."""
         current = str(self.config_entry.options.get(CONF_ACK_SERVICE, ""))
+        disabled = self.config_entry.options.get(CONF_DISABLE_ACK, False) is True
         errors = {}
         if user_input is not None:
             service = str(user_input.get(CONF_ACK_SERVICE) or "").strip()
-            if service and not re.fullmatch(r"esphome\.[a-z][a-z0-9_]+", service):
+            opt_out = user_input.get(CONF_DISABLE_ACK, disabled)
+            if type(opt_out) is not bool:
+                errors["base"] = "invalid_ack_service"
+            elif service and not re.fullmatch(r"esphome\.[a-z][a-z0-9_]+", service):
                 errors["base"] = "invalid_ack_service"
             else:
-                options = {**self.config_entry.options}
+                options = {**self.config_entry.options, CONF_DISABLE_ACK: opt_out}
                 if service:
                     options[CONF_ACK_SERVICE] = service
                 else:
@@ -804,6 +808,7 @@ class PalPulseOptionsFlow(config_entries.OptionsFlowWithReload):
         return self.async_show_form(
             step_id="history_transport",
             data_schema=vol.Schema({
+                vol.Optional(CONF_DISABLE_ACK, default=disabled): bool,
                 vol.Optional(CONF_ACK_SERVICE, default=current): str,
             }),
             errors=errors,
