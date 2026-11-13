@@ -304,6 +304,79 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MockStore.VALUES[key]["status"], "writing")
         self.manager._backup.assert_not_awaited()
 
+    async def test_legacy_12_of_24_journal_without_repair_safe_can_resume(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(journal["rows_committed"], 12)
+        # A 0.3b1/0.3b2 journal has no repair_safe metadata. The installed
+        # 0.3b5 code falsely treats its absence as proof of dangerous pricing.
+        journal["plan"].pop("repair_safe")
+        journal["plan"].pop("blocking_conflicts", None)
+        self.fail_on_call = None
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        self.assertTrue(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["legacy_audit"]["verified"])
+        self.assertEqual(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["legacy_audit"]["checked_hours"], 24)
+        self.assertAlmostEqual(self.writer._sum, plan["last_sum"], places=5)
+        self.assertEqual(self.manager._backup.await_count, 1)
+
+    async def test_legacy_journal_detects_tampered_unverified_hour(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        journal["plan"].pop("repair_safe")
+        journal["plan"]["rows"][12]["new_sum"] += 1.0
+        self.fail_on_call = None
+        written_before = self.write_calls
+        with self.assertRaisesRegex(ValueError, "independent tariff reconstruction"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.write_calls, written_before)
+        self.assertEqual(journal["rows_committed"], 12)
+        self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
+        self.assertEqual(self.manager._backup.await_count, 1)
+
+    async def test_legacy_journal_with_independently_supported_counter_reset(self):
+        prior, reset = self.start + 6 * 3600, self.start + 7 * 3600
+        self.cost_rows[prior] = {
+            "start": prior, "sum": 5.0, "state": 5.0,
+        }
+        self.cost_rows[reset] = {
+            "start": reset, "sum": 2.0, "state": 2.0,
+        }
+        plan = await self.preview()
+        self.assertTrue(plan["repair_safe"])
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        journal["plan"].pop("repair_safe")
+        self.fail_on_call = None
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        self.assertGreater(journal["legacy_audit"]["conflicts_checked"], 0)
+
+    async def test_legacy_journal_blocks_ambiguous_retained_charge(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        journal["plan"]["repair_safe"] = False
+        journal["plan"]["rows"][12]["source"] = "legacy_retained"
+        self.fail_on_call = None
+        before = self.write_calls
+        with self.assertRaisesRegex(ValueError, "Original billing evidence differs"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.write_calls, before)
+        self.assertEqual(journal["rows_committed"], 12)
+
     async def test_old_partial_journal_resumes_from_saved_preview(self):
         supervisor = importlib.import_module(
             "custom_components.palpulse.cost_reconcile_supervisor"
