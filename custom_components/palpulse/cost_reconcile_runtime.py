@@ -28,7 +28,6 @@ from .tariff_history import (
 from .panel_settings import revision
 
 _LOGGER = logging.getLogger(__name__)
-MAX_RECONCILE_ROWS = 350
 
 
 def _queued_hours_covered(pending: list[dict], plan: dict) -> bool:
@@ -77,7 +76,14 @@ async def preview_cost_reconciliation(
     if end <= start:
         raise ValueError("No completed hours in the selected date range")
     versions = entry.options.get(CONF_TARIFF_VERSIONS, [])
-    latest = validate_versions(versions)[-1:] if versions else []
+    ordered_versions = validate_versions(versions) if versions else []
+    latest = ordered_versions[-1:]
+    if ordered_versions and start_day < ordered_versions[0]["effective_from"]:
+        raise ValueError(
+            f"The selected period starts before the saved tariff contract "
+            f"({ordered_versions[0]['effective_from']}). Select a date "
+            "within a known contract term; older rates are not guessed"
+        )
     if latest and latest[0]["options"] != captured_tariff(entry.options):
         raise ValueError(
             "Your current electricity rates differ from the newest dated "
@@ -88,6 +94,7 @@ async def preview_cost_reconciliation(
     cost_id = f"{DOMAIN}:powerpal_{meter}_cost"
     energy_id = f"{DOMAIN}:powerpal_{meter}_energy"
     # Read two weeks before for the existing cumulative monetary anchor.
+    # This works for the entire selected contract, not an arbitrary 14-day slice.
     rows = await _read(
         hass, (energy_id, cost_id), start - 14 * 86400, end,
     )
@@ -214,8 +221,8 @@ async def apply_cost_reconciliation(
                             raise ValueError("Tariff or Recorder changed. Review journal")
                 cost_id = writer.statistic_id
                 energy_id = importer.statistic_id
-                if not plan["rows"] or len(plan["rows"]) > MAX_RECONCILE_ROWS:
-                    raise ValueError("No bounded historical cost rows to reconcile")
+                if not plan["rows"]:
+                    raise ValueError("No evidenced historical cost rows to reconcile")
                 max_written = int(plan["rows"][-1]["start"])
                 if writer._last_hour is not None and writer._last_hour > max_written:
                     raise ValueError("Live cost checkpoint advanced past repair range")
