@@ -1,0 +1,68 @@
+name: Publish PalPulse 0.4b3
+on:
+  push:
+    branches:
+      - release/0.4b3-publish
+    paths:
+      - .github/workflows/publish-0.4b3.yml
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Validate merge target and version before tagging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=6227319b0950aafa386f4aeb078143f65a64e04d
+          actual="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$actual" = "$expected" || { echo "Main changed. Aborting 0.4b3 publication" >&2; exit 1; }
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/manifest.json?ref=main" --jq '.content' | base64 --decode | jq -r '.version')"
+          test "$version" = '0.4b3'
+          cache="$(gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/panel.py?ref=main" --jq '.content' | base64 --decode | grep -F 'palpulse-panel.js?v=0.4b3' | wc -l)"
+          test "$cache" = '1'
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## PalPulse 0.4b3 (experimental beta)
+
+          ### Reliable history acknowledged by default
+          - Automatically detect the uniquely matching ESPHome ACK action by calculating the same Powerpal MAC identity hash as the ESP32 firmware. No manual ACK service entry for new or existing installations.
+          - Discover the service after a late ESPHome startup. Refuse ambiguous matching actions rather than guessing.
+          - New unchecked-by-default **Disable automatic history acknowledgements** checkbox under PalPulse > Settings; optional manual override retained for specialised deployments.
+          - Display the actual resolved ACK service, configuration state and warnings when reliable-history delivery lacks an action.
+          - Reuse the detected action for safe buffered-history replay without advancing the ESP32 NVS ACK cursor artificially.
+          - Keep all previously recorded energy/cost statistics, migration journals and backups unchanged.
+          - Verified with Python regressions, dashboard button tests, Home Assistant hassfest and HACS validation.
+
+          **Requirements:** Home Assistant Core 2026.11.1+ and compatible PalPulse ESPHome firmware with `history_events: true`, `reliable_history: true`, `api.homeassistant_services: true`, and `api.custom_services: true` (0.2b4 supported).
+
+          **Beta warning:** Back up Home Assistant, including Recorder, before updating. No historical measurements can be fabricated if Powerpal has lost their native buffered data. Verify the ESP32 firmware ACK checkpoint and imported energy hours after restarting Home Assistant.
+          NOTES
+          if ! gh release view 0.4b3 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create 0.4b3 --repo "$GITHUB_REPOSITORY" --target 6227319b0950aafa386f4aeb078143f65a64e04d \
+              --title 'PalPulse 0.4b3 (experimental beta)' \
+              --notes-file "$RUNNER_TEMP/notes.md" --latest
+          fi
+      - name: Verify release tag and publish evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=6227319b0950aafa386f4aeb078143f65a64e04d
+          tagged="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/0.4b3" --jq '.object.sha')"
+          test "$tagged" = "$expected" || { echo 'Release tag does not match validated merge commit' >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/0.4b3" --jq '{tag_name, draft, prerelease, html_url}' > "$RUNNER_TEMP/verified.json"
+          jq -e '.tag_name=="0.4b3" and .draft==false' "$RUNNER_TEMP/verified.json" >/dev/null
+          b64="$(base64 -w0 "$RUNNER_TEMP/verified.json")"
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/.github/palpulse-0.4b3-release-verified.json" \
+            -f message='chore: verify published 0.4b3 GitHub release' \
+            -f branch='release/0.4b3-publish' \
+            -f content="$b64" >/dev/null
+          cat "$RUNNER_TEMP/verified.json"
