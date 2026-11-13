@@ -200,6 +200,14 @@ async function click(fields) {
     dataset: { setting: "free_excess_cents_per_kwh" },
     type: "number", value: "19.75",
   }];
+  // The 60-second automatic refresh must not discard an unsaved tariff edit.
+  const inputListener = panel.shadowRoot.listeners.get("input");
+  assert.equal(typeof inputListener, "function");
+  inputListener({ target: panel.shadowRoot.fields[0] });
+  panel.shadowRoot.fields = [];
+  await panel.refresh();
+  assert.ok(panel.shadowRoot.innerHTML.includes('value="19.75"'),
+            "automatic refresh discarded a draft electricity rate");
   await click({ "settings-save": "" });
   const save = effects.webSocket.find(x => x.type === "palpulse/save_settings");
   assert.equal(save.entry_id, "meter-one");
