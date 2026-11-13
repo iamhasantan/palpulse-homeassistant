@@ -1,4 +1,4 @@
-name: Audit PalPulse release cleanup
+name: Prune pre-0.4b1 PalPulse GitHub releases
 on:
   push:
     branches:
@@ -8,15 +8,96 @@ on:
 permissions:
   contents: write
 jobs:
-  audit:
+  prune:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
-      - name: Inventory releases before deletion
+      - name: Delete older versioned release records, never tags
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq '.[] | [.id, .tag_name, .published_at, .draft, .prerelease] | @tsv' | tee "$RUNNER_TEMP/palpulse-release-inventory.tsv"
-          echo "Release records: $(wc -l < "$RUNNER_TEMP/palpulse-release-inventory.tsv")"
-          gh release view 0.4b1 --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,createdAt --jq '{tagName,isDraft,createdAt}'
+          tmp="$RUNNER_TEMP"
+          # GH CLI paginates releases across all pages, including drafts.
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq '.[] | [.id, .tag_name, .published_at] | @tsv' > "$tmp/all-releases.tsv"
+          python3 - "$tmp/all-releases.tsv" "$tmp/delete-releases.tsv" "$tmp/keep-releases.tsv" <<'PY'
+          import csv, re, sys
+          input_path, delete_path, keep_path = sys.argv[1:]
+          rows = list(csv.reader(open(input_path, encoding='utf-8'), delimiter='\t'))
+          releases = [(int(row[0]), row[1], row[2] if len(row)>2 else '') for row in rows if len(row)>=2]
+          if sum(tag == '0.4b1' for _, tag, _ in releases) != 1:
+              raise SystemExit('Protected 0.4b1 release missing or duplicated; no deletion')
+          # Keep unknown/non-versioned releases rather than guessing.
+          pattern = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?(?:(a|b|rc)(\d+))?$', re.I)
+          stage = {'a': -3, 'b': -2, 'rc': -1}
+          def parse(tag):
+              m = pattern.fullmatch(tag)
+              if not m: return None
+              major, minor, patch, phase, seq = m.groups()
+              return (int(major), int(minor), int(patch or 0), stage.get((phase or '').lower(), 0), int(seq or 0))
+          current = parse('0.4b1')
+          deleting, keeping = [], []
+          for rid, tag, published in releases:
+              version = parse(tag)
+              if tag != '0.4b1' and version is not None and version < current:
+                  deleting.append((rid, tag, published))
+              else:
+                  keeping.append((rid, tag, published))
+          with open(delete_path, 'w', encoding='utf-8') as f:
+              for rid, tag, _ in deleting: f.write(f'{rid}\t{tag}\n')
+          with open(keep_path, 'w', encoding='utf-8') as f:
+              for _, tag, _ in keeping: f.write(f'{tag}\n')
+          print(f'Inventory {len(releases)} release records; delete {len(deleting)} earlier versions, keep {len(keeping)}')
+          for _, tag, _ in deleting: print(f'DELETE: {tag}')
+          for _, tag, _ in keeping: print(f'KEEP: {tag}')
+          PY
+          : > "$tmp/deleted-releases.tsv"
+          : > "$tmp/errors.txt"
+          while IFS=$'\t' read -r release_id tag; do
+            [[ -n "$release_id" ]] || continue
+            if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}" > /dev/null; then
+              printf '%s\t%s\n' "$release_id" "$tag" >> "$tmp/deleted-releases.tsv"
+              echo "Removed release $tag (Git tag retained)"
+            else
+              printf '%s\n' "$tag" >> "$tmp/errors.txt"
+              echo "Failed to remove release $tag" >&2
+            fi
+          done < "$tmp/delete-releases.tsv"
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq '.[] | [.id, .tag_name, .published_at] | @tsv' > "$tmp/remaining-releases.tsv"
+          python3 - "$tmp" <<'PY'
+          import csv, json, os, sys
+          p=sys.argv[1]
+          def tags(name):
+              with open(os.path.join(p,name),encoding='utf-8') as f:
+                  return [row for row in csv.reader(f,delimiter='\t') if row]
+          before=tags('all-releases.tsv')
+          removed=tags('deleted-releases.tsv')
+          after=tags('remaining-releases.tsv')
+          failures=open(os.path.join(p,'errors.txt'),encoding='utf-8').read().splitlines()
+          planned=tags('delete-releases.tsv')
+          report={
+              'protected_release':'0.4b1',
+              'release_records_before':len(before),
+              'deleted_release_tags':[row[1] for row in removed],
+              'delete_failures':failures,
+              'remaining_release_tags':[row[1] for row in after],
+              'unexpected_remaining_older_tags':[row[1] for row in planned if row[1] in {a[1] for a in after}],
+              'git_tags_preserved':True
+          }
+          if '0.4b1' not in report['remaining_release_tags']:
+              raise SystemExit('Protected release disappeared. Refusing success')
+          with open(os.path.join(p,'palpulse-release-cleanup-report.json'),'w',encoding='utf-8') as f:
+              json.dump(report,f,indent=2)
+          print(json.dumps(report,indent=2))
+          PY
+          report_b64="$(base64 -w 0 "$tmp/palpulse-release-cleanup-report.json")"
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/.github/palpulse-release-cleanup-0.4b1-report.json" \
+            -f message='chore: record older release cleanup verification' \
+            -f branch='maintenance/prune-older-releases-0.4b1' \
+            -f content="$report_b64" >/dev/null
+          test ! -s "$tmp/errors.txt"
+          python3 - "$tmp/palpulse-release-cleanup-report.json" <<'PY'
+          import json,sys
+          report=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert not report['unexpected_remaining_older_tags'], 'Old releases remain after delete'
+          PY
