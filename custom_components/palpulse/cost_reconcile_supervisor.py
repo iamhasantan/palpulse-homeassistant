@@ -7,7 +7,7 @@ discard a journal when Recorder contains even one changed monetary row.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
 import logging
 
 from homeassistant.helpers.storage import Store
@@ -119,100 +119,104 @@ async def launch(
 ) -> dict:
     """Return immediately; HA processes the verified Recorder job itself."""
     entry_id = entry.entry_id
-    jobs = _jobs(hass)
-    if jobs.get(entry_id, {}).get("status") == "running":
-        return {"started": False, "message": "A cost repair is already running"}
-    saved = await _store(hass, entry.data["meter_mac"]).async_load() or {}
-    incomplete = saved.get("status") in INCOMPLETE
+    mutex = hass.data.setdefault(f"{DOMAIN}_cost_reconcile_launch_locks", {}).setdefault(
+        entry_id, asyncio.Lock(),
+    )
+    async with mutex:
+        jobs = _jobs(hass)
+        if jobs.get(entry_id, {}).get("status") == "running":
+            return {"started": False, "message": "A cost repair is already running"}
+        saved = await _store(hass, entry.data["meter_mac"]).async_load() or {}
+        incomplete = saved.get("status") in INCOMPLETE
 
-    if resume:
-        if not incomplete:
-            return {
-                "started": False,
-                "message": "No interrupted cost repair remains. Preview your desired dates",
-            }
-        # The original protected plan and its backup are authoritative.
-        start_day, end_day, digest = (
-            saved.get("start_date"), saved.get("end_date"), saved.get("digest"),
-        )
-        if saved.get("settings_revision") != revision(entry.options):
-            return {
-                "started": False, "message": (
-                    "Tariff settings changed since the interrupted repair. "
-                    "No Recorder rows were changed by this request"
-                ),
-            }
-    else:
-        if not all(isinstance(x, str) and x for x in (
-            start_day, end_day, digest,
-        )):
-            return {"started": False, "message": "Preview a contract date range first"}
-        if incomplete:
-            if not await _abort_only_if_untouched(hass, entry, saved):
-                previous = _public_saved(saved)
+        if resume:
+            if not incomplete:
                 return {
-                    "started": False, "resume_required": True,
-                    "previous": previous,
-                    "message": (
-                        "An earlier correction already changed Recorder rows "
-                        "or cannot be proven untouched. Choose Resume previous "
-                        "repair. It must finish before a new date range begins"
+                    "started": False,
+                    "message": "No interrupted cost repair remains. Preview your desired dates",
+                }
+            # The original protected plan and its backup are authoritative.
+            start_day, end_day, digest = (
+                saved.get("start_date"), saved.get("end_date"), saved.get("digest"),
+            )
+            if saved.get("settings_revision") != revision(entry.options):
+                return {
+                    "started": False, "message": (
+                        "Tariff settings changed since the interrupted repair. "
+                        "No Recorder rows were changed by this request"
                     ),
                 }
-        # The contract and Recorder snapshot must still match the preview.
-        fresh = await preview_cost_reconciliation(
-            hass, entry, start_day, end_day,
-        )
-        if fresh["digest"] != digest:
-            return {
-                "started": False, "message": (
-                    "The contract or recorded data changed since Preview. "
-                    "Preview again to avoid applying stale costs"
-                ),
-            }
-        if not fresh.get("repair_safe", False):
-            return {
-                "started": False,
-                "message": (
-                    "Some cost-counter breaks cannot be priced from verified "
-                    "energy. Restore those hours or review the conflict table "
-                    "before correcting Recorder"
-                ),
-            }
-
-    jobs[entry_id] = {
-        "status": "running", "start_date": start_day,
-        "end_date": end_day, "rows_committed": 0, "total_rows": 0,
-        "last_error": None,
-    }
-
-    async def worker() -> None:
-        def progress(done: int, total: int) -> None:
-            jobs[entry_id]["rows_committed"] = done
-            jobs[entry_id]["total_rows"] = total
-
-        try:
-            result = await apply_cost_reconciliation(
-                hass, entry, start_day, end_day, digest,
-                progress=progress,
+        else:
+            if not all(isinstance(x, str) and x for x in (
+                start_day, end_day, digest,
+            )):
+                return {"started": False, "message": "Preview a contract date range first"}
+            if incomplete:
+                if not await _abort_only_if_untouched(hass, entry, saved):
+                    previous = _public_saved(saved)
+                    return {
+                        "started": False, "resume_required": True,
+                        "previous": previous,
+                        "message": (
+                            "An earlier correction already changed Recorder rows "
+                            "or cannot be proven untouched. Choose Resume previous "
+                            "repair. It must finish before a new date range begins"
+                        ),
+                    }
+            # The contract and Recorder snapshot must still match the preview.
+            fresh = await preview_cost_reconciliation(
+                hass, entry, start_day, end_day,
             )
-            jobs[entry_id].update({
-                "status": "complete", "result": result,
-                "message": result.get("message"),
-            })
-        except Exception as err:
-            _LOGGER.exception("PalPulse full-contract cost repair stopped safely")
-            jobs[entry_id].update({
-                "status": "failed",
-                "last_error": f"{type(err).__name__}: {err}"[:500],
-            })
+            if fresh["digest"] != digest:
+                return {
+                    "started": False, "message": (
+                        "The contract or recorded data changed since Preview. "
+                        "Preview again to avoid applying stale costs"
+                    ),
+                }
+            if not fresh.get("repair_safe", False):
+                return {
+                    "started": False,
+                    "message": (
+                        "Some cost-counter breaks cannot be priced from verified "
+                        "energy. Restore those hours or review the conflict table "
+                        "before correcting Recorder"
+                    ),
+                }
 
-    # HA owns the running task. Closing the browser will not cancel a repair.
-    hass.async_create_task(worker())
-    return {
-        "started": True, "message": (
-            "Verified cost correction started. PalPulse will keep progress "
-            "and resume information if you close this page"
-        ),
-        "start_date": start_day, "end_date": end_day,
-    }
+        jobs[entry_id] = {
+            "status": "running", "start_date": start_day,
+            "end_date": end_day, "rows_committed": 0, "total_rows": 0,
+            "last_error": None,
+        }
+
+        async def worker() -> None:
+            def progress(done: int, total: int) -> None:
+                jobs[entry_id]["rows_committed"] = done
+                jobs[entry_id]["total_rows"] = total
+
+            try:
+                result = await apply_cost_reconciliation(
+                    hass, entry, start_day, end_day, digest,
+                    progress=progress,
+                )
+                jobs[entry_id].update({
+                    "status": "complete", "result": result,
+                    "message": result.get("message"),
+                })
+            except Exception as err:
+                _LOGGER.exception("PalPulse full-contract cost repair stopped safely")
+                jobs[entry_id].update({
+                    "status": "failed",
+                    "last_error": f"{type(err).__name__}: {err}"[:500],
+                })
+
+        # HA owns the running task. Closing the browser will not cancel a repair.
+        hass.async_create_task(worker())
+        return {
+            "started": True, "message": (
+                "Verified cost correction started. PalPulse will keep progress "
+                "and resume information if you close this page"
+            ),
+            "start_date": start_day, "end_date": end_day,
+        }
