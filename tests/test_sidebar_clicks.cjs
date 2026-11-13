@@ -143,6 +143,22 @@ const fakeHass = {
                        recorded_complete: true }],
       }};
     }
+    if (message.type === "palpulse/cost_repair_assess") {
+      return {
+        status: "material_change", can_replan: true,
+        digest: "e".repeat(64), affected_count: 1,
+        missing_energy_hours: 0, blocked_conflicts: 0,
+        reason: "One previously recorded meter hour changed",
+        changed_hours: [{
+          start: 1794304800, local_hour: "11 Nov 2026, 09:00 AM",
+          old_charge: 0.15, revised_charge: 0.19,
+          reason: "Powerpal history was recovered",
+        }],
+      };
+    }
+    if (message.type === "palpulse/cost_repair_fix_energy") {
+      return { started: true, message: "Verified energy rebase started" };
+    }
     if (message.type === "palpulse/cost_reconcile_resume") {
       return { started: true, message: "Previous verified repair resumed" };
     }
@@ -260,6 +276,16 @@ async function click(fields) {
   assert.ok(panel.shadowRoot.innerHTML.includes("Cost repair stopped"));
   assert.ok(panel.shadowRoot.innerHTML.includes("12 / 66"));
   assert.ok(panel.shadowRoot.innerHTML.includes("Live cost checkpoint and Recorder sum disagree"));
+  await click({ "cost-assess": "" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Recovery assessment"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("11 Nov 2026"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("Back up, rebuild and continue safely"));
+  await click({ "cost-fix-energy": "" });
+  assert.ok(effects.webSocket.some(x =>
+    x.type === "palpulse/cost_repair_fix_energy"
+    && x.expected_digest === "e".repeat(64)
+    && x.confirm === true
+  ), "safe cost rebase must be separately confirmed against the reviewed energy digest");
 
   await click({ linkcost: "" });
   assert.ok(effects.webSocket.some(x => x.type === "palpulse/link_verified_cost" && x.confirm === true));
