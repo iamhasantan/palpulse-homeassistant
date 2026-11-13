@@ -27,6 +27,8 @@ from .tariff_history import (
 )
 from .panel_settings import revision
 from .cost_reconcile_legacy_audit import audit_legacy_repair
+from .cost_reconcile_drift import audit_changed_energy
+import copy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -190,9 +192,157 @@ async def _extend_plan_for_live_tail(
     current_costs.update(actual)
 
 
+async def _rebase_changed_energy(
+    hass, entry, saved: dict, store, importer, writer, manager,
+    energy_rows: list[dict], cost_rows: dict[int, dict],
+    *, expected_digest: str,
+) -> tuple[dict, dict]:
+    """Explicitly reprice the interrupted plan after its metering changed.
+
+    No plan or source data is replaced without a NEW verified Recorder backup.
+    Every current cost row must still match its immutable original value or
+    one of the already-authorised old repair targets. An archival journal
+    preserves the exact original digest and its verified pre-repair backup.
+    """
+    old_plan = saved["plan"]
+    assessment = audit_changed_energy(
+        saved, energy_rows, entry.options.get(CONF_TARIFF_VERSIONS, []),
+        hass.config.time_zone,
+    )
+    if assessment.get("digest") != expected_digest:
+        raise ValueError(
+            "Energy changed since Fix was reviewed. Check changed hours again"
+        )
+    if not assessment.get("can_replan"):
+        raise ValueError(
+            assessment["reason"] + ". No cost changes were made"
+        )
+    new_plan = assessment["_plan"]
+    originals = {
+        int(row["start"]): row for row in old_plan["rows"]
+    }
+    desired = {
+        int(row["start"]): row for row in new_plan["rows"]
+    }
+    if any(stamp not in desired for stamp in originals):
+        raise ValueError(
+            "The newer energy data removes a previously planned billing hour. "
+            "Manual cost audit required; saved repair preserved"
+        )
+    # A row not in the old journal can only be added if Recorder has no
+    # monetary value at that hour. Never seize an unrelated cost record.
+    for stamp, row in desired.items():
+        current = cost_rows.get(stamp)
+        previous = originals.get(stamp)
+        if previous is None:
+            if current is not None or row.get("old_sum") is not None:
+                raise ValueError(
+                    f"Newly discovered UTC hour {stamp} has an existing cost "
+                    "record without an original snapshot. Manual review needed"
+                )
+            continue
+        if current is None:
+            if previous.get("old_sum") is not None:
+                raise ValueError(
+                    f"Original cost record vanished at UTC {stamp}"
+                )
+            continue
+        expected_sources = [
+            (previous.get("old_sum"), previous.get("old_state")),
+            (previous.get("new_sum"), previous.get("new_state")),
+        ]
+        other = saved.get("rebase_previous_targets", {}).get(str(stamp))
+        if other:
+            expected_sources.append((other.get("sum"), other.get("state")))
+        if not any(
+            _equal(current.get("sum"), total)
+            and _equal(current.get("state"), state)
+            for total, state in expected_sources
+        ):
+            raise ValueError(
+                f"Cost at UTC {stamp} no longer matches the original or "
+                "previously verified partial correction. Nothing was changed"
+            )
+
+    fresh_backup = await manager._backup(
+        "before repricing an interrupted PalPulse cost correction"
+    )
+    await manager._verify_prior_backup(fresh_backup)
+    latest = await _read(
+        hass, (importer.statistic_id, writer.statistic_id),
+        int(new_plan["start_utc"]) - HOUR,
+        max(int(new_plan["end_utc"]),
+            int(writer._last_hour + HOUR) if writer._last_hour is not None
+            else int(new_plan["end_utc"])),
+    )
+    if energy_fingerprint(
+        latest.get(importer.statistic_id, []),
+        int(new_plan["start_utc"]), int(new_plan["end_utc"]),
+    ) != expected_digest:
+        raise ValueError(
+            "Energy changed while the extra Recorder backup was being made. "
+            "The old journal is untouched"
+        )
+    newest_cost = {
+        int(row["start"]): row
+        for row in latest.get(writer.statistic_id, [])
+    }
+    for stamp, old in originals.items():
+        before, after = cost_rows.get(stamp), newest_cost.get(stamp)
+        if before is None or after is None:
+            if before is not None or after is not None:
+                raise ValueError(
+                    "Cost rows changed during the verified backup; "
+                    "old journal retained"
+                )
+        elif not (
+            _equal(before.get("sum"), after.get("sum"))
+            and _equal(before.get("state"), after.get("state"))
+        ):
+            raise ValueError(
+                "Cost rows changed while the verified backup ran; "
+                "old journal retained"
+            )
+
+    # Archive first, so a later crash can recover the original journal,
+    # original backup and every previously verified batch.
+    archive_key = (
+        f"{DOMAIN}_cost_reconcile_{importer.mac}_"
+        f"before_rebase_{saved['digest'][:20]}"
+    )
+    await Store(hass, 1, archive_key).async_save(copy.deepcopy(saved))
+    previous_targets = dict(saved.get("rebase_previous_targets", {}))
+    previous_targets.update({
+        str(stamp): {"sum": row["new_sum"], "state": row["new_state"]}
+        for stamp, row in originals.items()
+    })
+    updated = {
+        **saved,
+        "status": "prepared",
+        "digest": new_plan["digest"],
+        "plan": new_plan,
+        "rows_committed": 0,
+        "backup_id": fresh_backup,
+        "previous_repair_archive": archive_key,
+        "previous_repair_digest": saved["digest"],
+        "previous_repair_backup": saved["backup_id"],
+        "rebase_previous_targets": previous_targets,
+        "rebase_summary": {
+            "changed_hours": assessment["affected_count"],
+            "verified_backup": fresh_backup,
+            "reason": "Source energy changed after the original preview",
+        },
+        "last_error": None,
+        "failed_stage": None,
+    }
+    await store.async_save(updated)
+    return updated, newest_cost
+
+
 async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
     *, progress=None, stage=None,
+    allow_energy_rebase=False, expected_energy_digest=None,
 ) -> dict:
     """Backup -> journal -> compare -> commit -> verify, with crash resumption."""
     if not isinstance(digest, str) or len(digest) != 64:
@@ -331,13 +481,36 @@ async def apply_cost_reconciliation(
                     hass, (energy_id, cost_id),
                     int(plan["start_utc"]) - HOUR, end_to_read,
                 )
-                if energy_fingerprint(
+                live_digest = energy_fingerprint(
                     rows_before.get(energy_id, []),
                     int(plan["start_utc"]), int(plan["end_utc"]),
-                ) != plan.get("energy_digest"):
+                )
+                if live_digest != plan.get("energy_digest"):
+                    if not allow_energy_rebase:
+                        raise ValueError(
+                            "Meter energy changed since this cost plan was "
+                            "prepared. Select Assess changed energy to review "
+                            "which hours need repricing"
+                        )
+                    if stage is not None:
+                        stage("auditing_changed_energy_and_backup")
+                    original_costs = {
+                        int(row["start"]): row
+                        for row in rows_before.get(cost_id, [])
+                    }
+                    saved, updated_costs = await _rebase_changed_energy(
+                        hass, entry, saved, store, importer, writer, manager,
+                        rows_before.get(energy_id, []), original_costs,
+                        expected_digest=expected_energy_digest,
+                    )
+                    plan = saved["plan"]
+                    digest = saved["digest"]
+                    legacy_needs_audit = False
+                    rows_before[cost_id] = list(updated_costs.values())
+                elif allow_energy_rebase:
                     raise ValueError(
-                        "Meter energy changed since this cost plan was prepared. "
-                        "Do not resume a stale correction; review the saved journal"
+                        "Energy is unchanged since the saved repair. "
+                        "Use Continue previous repair instead"
                     )
                 if incomplete and legacy_needs_audit:
                     if stage is not None:
@@ -379,7 +552,14 @@ async def apply_cost_reconciliation(
                         _equal(current_row.get("sum"), item["new_sum"])
                         and _equal(current_row.get("state"), item["new_state"])
                     )
-                    if not (old_match or new_match):
+                    previous = saved.get("rebase_previous_targets", {}).get(
+                        str(item["start"]),
+                    )
+                    previous_match = bool(previous) and (
+                        _equal(current_row.get("sum"), previous.get("sum"))
+                        and _equal(current_row.get("state"), previous.get("state"))
+                    )
+                    if not (old_match or new_match or previous_match):
                         raise ValueError(
                             "Unexpected Recorder cost change at UTC "
                             f"{item['start']}. Refusing an overwrite"
