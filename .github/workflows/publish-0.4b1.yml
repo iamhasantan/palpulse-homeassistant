@@ -1,0 +1,51 @@
+name: Publish PalPulse 0.4b1
+on:
+  push:
+    branches:
+      - release/0.4b1-publish
+    paths:
+      - .github/workflows/publish-0.4b1.yml
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate main contains the tested 0.4b1 merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA=845ecf8709d622deb7edd08bb9242c44d3311211
+          ACTUAL_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "Main moved; refusing to tag a different commit" >&2
+            exit 1
+          fi
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/custom_components/palpulse/manifest.json?ref=main" --jq '.content' | base64 --decode | jq -r .version)"
+          test "$version" = '0.4b1'
+      - name: Publish normal GitHub release for Marketplace
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view 0.4b1 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo '0.4b1 release already exists; nothing to change'
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/palpulse-0.4b1.md" <<'NOTES'
+          ## PalPulse 0.4b1 (experimental beta)
+          - New read-only forward audit of mature Recorder energy/cost hours, separately showing missing, queued and unpriceable hours without inserting estimated values.
+          - Cost recovery now walks in bounded batches from the saved durable checkpoint after long outages, without skipping older recoverable costs.
+          - Historical cost reconciliation tools remain available in Settings > Advanced historical tools but are hidden during normal monitoring.
+          - Existing history, Recorder statistics, cost-repair journals, backups, and ESP32 NVS/ACK cursors are preserved.
+          - Tested with Home Assistant integration validation and Python/JavaScript accounting regression suites.
+
+          **Minimum Home Assistant Core:** 2026.11.1.
+          **Beta caution:** Back up Home Assistant including Recorder before upgrading. This is not billing-grade software; inspect live hourly completeness and Recorder health after restarting.
+          NOTES
+          gh release create 0.4b1 --repo "$GITHUB_REPOSITORY" \
+            --target 845ecf8709d622deb7edd08bb9242c44d3311211 \
+            --title 'PalPulse 0.4b1 (experimental beta)' \
+            --notes-file "$RUNNER_TEMP/palpulse-0.4b1.md" --latest
