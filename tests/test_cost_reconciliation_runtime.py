@@ -623,6 +623,57 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MockStore.VALUES[
             f"palpulse_cost_reconcile_{MAC}"]["rows_committed"], 12)
 
+    async def test_missing_energy_blocks_automatic_rebase_without_writes(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        del self.energy_rows[self.start + 13 * 3600]
+        report = await supervisor.assess_changed_energy(self.hass, self.entry)
+        self.assertFalse(report["can_replan"])
+        self.assertGreater(report["affected_count"], 0)
+        writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "No cost changes were made"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                old["digest"], allow_energy_rebase=True,
+                expected_energy_digest=report["digest"],
+            )
+        self.assertEqual(self.write_calls, writes)
+        self.assertEqual(self.manager._backup.await_count, 1)
+        self.assertEqual(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["rows_committed"], 12)
+
+    async def test_extra_backup_failure_preserves_original_partial_journal(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        old = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(old["digest"])
+        self.fail_on_call = None
+        self.energy_rows[self.start + 13 * 3600]["change"] = None
+        report = await supervisor.assess_changed_energy(self.hass, self.entry)
+        self.manager._backup.side_effect = RuntimeError(
+            "Recorder backup did not finish"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Recorder backup did not finish"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                old["digest"], allow_energy_rebase=True,
+                expected_energy_digest=report["digest"],
+            )
+        journal = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(journal["rows_committed"], 12)
+        self.assertEqual(journal["digest"], old["digest"])
+        self.assertNotIn("rebase_previous_targets", journal)
+        self.assertEqual(self.cost_rows[self.end - 3600]["sum"], 2.65)
+
     async def test_changed_energy_rebase_rejects_unexpected_cost_ledger_change(self):
         supervisor = importlib.import_module(
             "custom_components.palpulse.cost_reconcile_supervisor"
