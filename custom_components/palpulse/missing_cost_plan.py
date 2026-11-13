@@ -216,6 +216,14 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
                         f"Original cost change at UTC {stamp} disagrees with "
                         "consecutive Recorder monetary sums"
                     )
+            elif Decimal(str(observed_change)) > intended + Decimal(str(EPS)):
+                # Recorder's reported change immediately after a hole might
+                # include an unjournalled catch-up amount. Charging all
+                # missing hours again would double bill that catch-up.
+                raise ValueError(
+                    f"Existing cost at UTC {stamp} may include missing-hour "
+                    "catch-up. Automatic cumulative repair refused"
+                )
             charge = Decimal(str(max(0.0, observed_change)))
             # The old monetary row is left as an *increment*; only its
             # cumulative baseline may shift due to independently proven gaps.
