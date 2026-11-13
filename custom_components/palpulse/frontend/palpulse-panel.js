@@ -23,7 +23,7 @@ _captureDraft(){
   if(this._draftMeter!==this._meter){this._draft={};this._draftMeter=this._meter;}
   for(const el of this.shadowRoot.querySelectorAll("[data-setting]")){
     const key=el.dataset.setting,value=el.type==="checkbox"?Boolean(el.checked):el.value;
-    const original=m.settings?.[key]??"";
+    const original=m.settings?.[key]??(el.type==="checkbox"?false:"");
     if(String(value)===String(original))delete this._draft[key];
     else this._draft[key]=value;
   }
@@ -114,7 +114,10 @@ reconcile(m){const plan=this._costPlan?.entry_id===this._meter?this._costPlan.pl
 settings(m){
 const v=m.settings||{};
 return`<section class="card"><h2>Advanced historical tools</h2><p>Legacy cost reconciliation is optional and hidden during normal monitoring. Old journals and backups are retained unchanged. It is not required for verified future readings.</p><button data-advanced-history>${this._legacyTools?"Hide advanced historical tools":"Show advanced historical tools"}</button>${this._legacyTools?'<button data-tab="reconcile">Open historical cost reconciliation</button>':""}</section><div class="two"><section class="card"><h2>Connections and dashboard</h2><p>These settings belong to the selected Powerpal meter, not other Home Assistant integrations.</p>
-${this._field(m,"history_ack_service","ESPHome acknowledged history action","text","Use the actual ESPHome action esphome.powerpal_proxy_palpulse_ack_XXXXXXXX from Developer Tools. Leave empty for unacknowledged delivery. Enabling it requires reliable_history: true and api.custom_services: true in the ESP32 YAML.")}
+${this._field(m,"history_ack_disabled","Disable automatic history acknowledgements","checkbox","Off by default. PalPulse automatically finds the matching ESPHome action for this Powerpal meter. Only disable this if you intentionally use best-effort history transport. Disabling can cause reliable ESPHome history to stall.")}
+${this.rows([["ACK mode",m.energy?.ack_enabled?"Automatic (enabled)":"Disabled"],["Matched ESPHome ACK action",m.energy?.ack_service||"Waiting for matching action"],["Action discovery",m.energy?.ack_resolution||"Not checked"]])}
+${m.energy?.ack_enabled&&!m.energy?.ack_service?this.n("Matching ESPHome ACK action has not registered. Reliable ESP32 history may stall until the action is found. Check ESPHome API connection and custom_services.",true):""}
+<details class="field"><summary>Manual ACK action override (advanced)</summary>${this._field(m,"history_ack_service","Existing custom action","text","Optional. Automatic discovery is used by default; an explicitly configured action is only preferred when it is registered.")}</details>
 ${this._field(m,"auto_link_energy_cost","Maintain the verified Energy cost link","checkbox","Only links an empty matching PalPulse source after Recorder confirms cost records. Never replaces another price.")}
 ${this.rows([["Current cost link",m.cost?.energy_dashboard_cost_link||"Not configured"],["ESP replay action",m.replay_service||"Not available"],["ESP history status",m.energy?.ack_error||"No error reported"]])}
 ${this._settingsActions()}</section>
