@@ -203,10 +203,13 @@ async def launch(
                 jobs[entry_id]["total_rows"] = total
                 jobs[entry_id]["stage"] = "verifying_recorder_batches"
 
+            def on_stage(value: str) -> None:
+                jobs[entry_id]["stage"] = value
+
             try:
                 result = await apply_cost_reconciliation(
                     hass, entry, start_day, end_day, digest,
-                    progress=progress,
+                    progress=progress, stage=on_stage,
                 )
                 jobs[entry_id].update({
                     "status": "complete", "result": result,
