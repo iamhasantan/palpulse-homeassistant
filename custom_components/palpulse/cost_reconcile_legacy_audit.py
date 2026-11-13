@@ -123,7 +123,17 @@ def audit_legacy_repair(
                     f"Original {field} differs from independent tariff "
                     f"reconstruction at UTC {stamp}"
                 )
-    if not _same(plan.get("last_sum"), saved_rows[-1]["new_sum"]):
+    if plan.get("tail_carried_forward"):
+        tail = [
+            row for row in plan.get("rows", [])
+            if int(row["start"]) >= end
+        ]
+        if (not tail or any(row.get("source") != "carry_forward" for row in tail)
+                or not _same(plan.get("last_sum"), tail[-1].get("new_sum"))):
+            raise UnsafeLegacyRepair(
+                "Previous extension of newer live costs is not internally consistent"
+            )
+    elif not _same(plan.get("last_sum"), saved_rows[-1]["new_sum"]):
         raise UnsafeLegacyRepair("Saved final monetary amount is inconsistent")
     return {
         "verified": True,
