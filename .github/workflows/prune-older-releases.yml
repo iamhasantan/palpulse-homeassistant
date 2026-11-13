@@ -1,0 +1,22 @@
+name: Audit PalPulse release cleanup
+on:
+  push:
+    branches:
+      - maintenance/prune-older-releases-0.4b1
+    paths:
+      - .github/workflows/prune-older-releases.yml
+permissions:
+  contents: write
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inventory releases before deletion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq '.[] | [.id, .tag_name, .published_at, .draft, .prerelease] | @tsv' | tee "$RUNNER_TEMP/palpulse-release-inventory.tsv"
+          echo "Release records: $(wc -l < "$RUNNER_TEMP/palpulse-release-inventory.tsv")"
+          gh release view 0.4b1 --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,createdAt --jq '{tagName,isDraft,createdAt}'
