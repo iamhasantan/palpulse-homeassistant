@@ -78,7 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         hass.config_entries.async_update_entry(entry, title=INTEGRATION_NAME)
     importer = PalPulseImporter(
         hass, meter, getattr(entry, "options", {}).get(CONF_ACK_SERVICE),
-        ack_disabled=entry.options.get(CONF_DISABLE_ACK, False) is True,
+        ack_disabled=getattr(entry, "options", {}).get(CONF_DISABLE_ACK, False) is True,
     )
     await importer.async_load()
     # Cost tracking is opt-in. It cannot rewrite or interrupt energy history.
