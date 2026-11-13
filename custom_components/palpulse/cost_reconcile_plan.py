@@ -24,14 +24,13 @@ from .pricing import (
 from .tariff_history import effective_tariff, validate_versions
 
 HOUR = 3600
-MAX_HOURS = 14 * 24 + 1
 MAX_HOURLY_KWH = 100.0
 TOLERANCE = 1e-5
 
 
 def billing_range(start_day: str, end_day: str, zone_name: str,
                   *, today: date | None = None) -> tuple[int, int]:
-    """Inclusive local dates, exclusive UTC end, max 14 days."""
+    """Inclusive billing dates, exclusive UTC end, across a full contract."""
     try:
         start, end = date.fromisoformat(start_day), date.fromisoformat(end_day)
     except (TypeError, ValueError) as exc:
@@ -41,8 +40,8 @@ def billing_range(start_day: str, end_day: str, zone_name: str,
     zone = ZoneInfo(zone_name)
     if today is None:
         today = datetime.now(zone).date()
-    if end > today or end < start or (end - start).days > 13:
-        raise ValueError("Use up to fourteen billing days, ending no later than today")
+    if end > today or end < start:
+        raise ValueError("Choose billing dates from the contract term, no later than today")
     since = datetime(start.year, start.month, start.day, tzinfo=zone)
     until_day = end + timedelta(days=1)
     until = datetime(until_day.year, until_day.month, until_day.day, tzinfo=zone)
@@ -111,7 +110,7 @@ def build_cost_plan(
     """
     if (
         start_utc % HOUR or end_utc % HOUR
-        or end_utc <= start_utc or end_utc - start_utc > MAX_HOURS * HOUR
+        or end_utc <= start_utc
     ):
         raise ValueError("Expected a bounded UTC-hour-aligned interval")
     history = validate_versions(versions)
