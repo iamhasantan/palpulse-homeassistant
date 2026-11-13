@@ -311,14 +311,18 @@ def build_cost_plan(
             cost += Decimal(str(options.get(CONF_SUPPLY_CENTS, 0))) / 100
             supply_dates.add(day)
         if cost is None:
-            if old is None:
-                # Neither energy nor a trustworthy existing hourly charge is
-                # available. Do not manufacture $0 or an empty Recorder row.
+            if old is None or old_increment is None:
+                # Missing data or an untrustworthy old sum is an *unknown*
+                # charge, never an implied $0. Conflicting old rows block
+                # automatic writes, and are never overwritten on a guess.
+                if old is not None:
+                    retained_rows += 1
+                    daily["retained_hours"] += 1
                 continue
-            charge = Decimal(str(old_increment if old_increment is not None else 0))
+            charge = Decimal(str(old_increment))
             retained_rows += 1
             daily["retained_hours"] += 1
-            source = "legacy_retained" if old_increment is not None else "legacy_uncertain"
+            source = "legacy_retained"
         else:
             charge = cost
             safe_rows += 1
