@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.3b6
+
+### What's Changed
+
+- **Fix the 12/66 paused repair from earlier beta formats.** In 0.3b3–0.3b5, the resume writer treated an absent `repair_safe` field in a 0.3b1/0.3b2 journal as a definitively unsafe cost plan. Older saved partial repairs can now be independently audited against their immutable pre-repair monetary values, original source classifications, all measured energy hours and the actual date-effective tariff. Only when EVERY original intended cost row agrees with that independent reconstruction can the existing verified backup and journal safely resume. This also supports genuine legacy cost-counter decreases with independently proven energy.
+- **No bypass of an actual safety failure.** A repair whose journal explicitly sets `repair_safe: false` is never upgraded by this compatibility check. The specific first unverified cost-break hour is surfaced instead, with all previously verified rows preserved.
+- **No duplicate billing or journal reset.** The original preview digest and backup remain authoritative. Already-committed cost rows must still match either their old or corrected state and sum before the next verified batch can be written. Any mismatch, incomplete historical evidence, invalid old monetary row or changed energy fingerprint stops without touching Recorder.
+- **More precise recovery diagnostics.** Report whether a failed repair was verifying its original backup, auditing old-format cost history, protecting newly recorded cost hours, verifying Recorder write batches or updating the live cost checkpoint.
+- **Regression coverage.** Simulate a verified 12/24 partially written legacy journal lacking the modern safety field, proven historical cost decreases, altered original cost amounts, false source classifications, and explicit unsafe verdicts. Confirm unsafe attempts never write new Recorder rows.
+
+### Safety and acceptance
+
+Requires **Home Assistant 2026.11.1**. Back up Home Assistant including Recorder before upgrading; keep all PalPulse repair Store files. This is a compatibility upgrade, not an instruction to reset an ESP32, undo historical cost corrections, or bypass a genuine missing-hour safety block. The dashboard will display the precise reason if an old frozen plan cannot be validated. The user's real Home Assistant Recorder repair still requires acceptance testing before it can be considered completed.
+
+
 ## 0.3b5
 
 ### What's Changed
