@@ -26,6 +26,7 @@ from .tariff_history import (
     CONF_TARIFF_VERSIONS, captured_tariff, validate_versions,
 )
 from .panel_settings import revision
+from .cost_reconcile_legacy_audit import audit_legacy_repair
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ async def _extend_plan_for_live_tail(
 
 async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
-    *, progress=None,
+    *, progress=None, stage=None,
 ) -> dict:
     """Backup -> journal -> compare -> commit -> verify, with crash resumption."""
     if not isinstance(digest, str) or len(digest) != 64:
@@ -222,6 +223,8 @@ async def apply_cost_reconciliation(
                 or saved.get("end_date") != end_day
             ):
                 raise ValueError("An earlier repair is incomplete. Resume that same preview first")
+            if stage is not None:
+                stage("verifying_original_backup")
             await manager._verify_prior_backup(saved["backup_id"])
             if saved.get("settings_revision") != revision(entry.options):
                 raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
@@ -230,11 +233,23 @@ async def apply_cost_reconciliation(
                 await manager._verify_prior_backup(backup_id)
             if not plan.get("baseline_verified", True):
                 raise ValueError("Saved cost correction has an unverified monetary baseline")
-            if not plan.get("repair_safe", False):
-                raise ValueError(
-                    "Saved cost correction has unverified legacy counter breaks. "
-                    "Review the conflict hours before any Recorder writes"
+            # An EXPLICIT unsafe verdict is not a legacy format issue and
+            # must never be overridden by reconstructing an incomplete
+            # original snapshot. Only absence of the flag (0.3b1/0.3b2)
+            # can be upgraded after a full independent audit.
+            if plan.get("repair_safe") is False:
+                breaks = plan.get("blocking_conflicts") or []
+                first = breaks[0] if breaks else None
+                detail = (
+                    f" First unverified UTC hour {first['start']}: "
+                    f"{first['reason']}" if first else ""
                 )
+                raise ValueError(
+                    f"Saved repair explicitly flagged {len(breaks)} unsafe "
+                    f"legacy cost-counter break(s).{detail} The {int(saved.get('rows_committed', 0))} "
+                    "already-written hours and backup remain untouched"
+                )
+            legacy_needs_audit = "repair_safe" not in plan
         else:
             plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
             if plan["digest"] != digest:
@@ -324,9 +339,27 @@ async def apply_cost_reconciliation(
                         "Meter energy changed since this cost plan was prepared. "
                         "Do not resume a stale correction; review the saved journal"
                     )
+                if incomplete and legacy_needs_audit:
+                    if stage is not None:
+                        stage("auditing_saved_cost_plan")
+                    # Older, partially committed journals predate the newer
+                    # repair_safe field. Never treat absence as proof of
+                    # danger or permission to bypass safety. Independently
+                    # rebuild their ORIGINAL cost plan from the preserved
+                    # pre-write rows, complete Recorder energy and dated
+                    # tariff before writing any more monetary statistics.
+                    saved["legacy_audit"] = audit_legacy_repair(
+                        plan,
+                        rows_before.get(energy_id, []),
+                        entry.options.get(CONF_TARIFF_VERSIONS, []),
+                        zone_name=hass.config.time_zone,
+                    )
+                    await store.async_save(saved)
                 current_costs = {
                     int(row["start"]): row for row in rows_before.get(cost_id, [])
                 }
+                if stage is not None:
+                    stage("protecting_new_live_costs")
                 await _extend_plan_for_live_tail(
                     hass, writer, manager, store, saved, current_costs,
                 )
@@ -358,6 +391,8 @@ async def apply_cost_reconciliation(
                     "unit_of_measurement": None, "unit_class": None,
                     "mean_type": StatisticMeanType.NONE, "has_sum": True,
                 }
+                if stage is not None:
+                    stage("verifying_recorder_batches")
                 saved["status"] = "writing"
                 await store.async_save(saved)
                 if progress is not None:
@@ -409,6 +444,8 @@ async def apply_cost_reconciliation(
                     if progress is not None:
                         progress(saved["rows_committed"], len(plan["rows"]))
 
+                if stage is not None:
+                    stage("updating_live_cost_checkpoint")
                 # Keep the live writer's durable checkpoint aligned with the
                 # new cost statistic. A restart must not restore the old sum.
                 writer._last_hour = max_written
