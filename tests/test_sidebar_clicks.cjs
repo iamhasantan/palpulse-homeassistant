@@ -274,7 +274,7 @@ async function click(fields) {
   assert.ok(panel.shadowRoot.innerHTML.includes('value="19.75"'),
             "automatic refresh discarded a draft electricity rate");
   await click({ "settings-save": "" });
-  const save = effects.webSocket.find(x => x.type === "palpulse/save_settings");
+  const save = effects.webSocket.filter(x => x.type === "palpulse/save_settings").at(-1);
   assert.equal(save.entry_id, "meter-one");
   assert.equal(save.expected_revision, "version-one");
   assert.equal(save.changes.free_excess_cents_per_kwh, "19.75");
