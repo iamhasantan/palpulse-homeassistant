@@ -196,6 +196,14 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
             observed_change = finite(old, "change")
             if observed_change is None or observed_change < -EPS:
                 raise ValueError(f"Cannot establish original hourly cost at UTC {stamp}")
+            prior = costs.get(stamp - HOUR)
+            if prior is not None:
+                prior_sum = finite(prior, "sum")
+                if prior_sum is None or abs((total - prior_sum) - observed_change) > EPS:
+                    raise ValueError(
+                        f"Original cost change at UTC {stamp} disagrees with "
+                        "consecutive Recorder monetary sums"
+                    )
             charge = Decimal(str(max(0.0, observed_change)))
             # The old monetary row is left as an *increment*; only its
             # cumulative baseline may shift due to independently proven gaps.
