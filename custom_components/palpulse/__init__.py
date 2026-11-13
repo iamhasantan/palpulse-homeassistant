@@ -129,6 +129,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             await importer.async_start()
         except Exception:
             _LOGGER.exception("PalPulse energy recovery could not start")
+
+    async def _start_cost_recovery() -> None:
+        # Cost recovery must not wait behind a long energy backlog. Each
+        # writer has its own lock and retains its separate durable checkpoint.
+        await started.wait()
         if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
             try:
                 await cost_recorder.async_start()
@@ -144,6 +149,10 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     )
     entry.async_create_background_task(
         hass, _consume_events(), f"PalPulse incoming minute events {meter}",
+        eager_start=False,
+    )
+    entry.async_create_background_task(
+        hass, _start_cost_recovery(), f"PalPulse independent cost recovery {meter}",
         eager_start=False,
     )
 
