@@ -93,14 +93,17 @@ class MissingCostPlanTests(unittest.TestCase):
         )
         self.assertGreater(rows[self.after_gap]["new_sum"], self.cost[10]["sum"])
 
-    def test_preserve_actual_recorded_hourly_charge_even_if_rate_differs(self):
+    def test_original_change_must_agree_with_original_monetary_sum(self):
         self.cost[-1]["change"] = .25
-        result = self.plan()
-        self.assertEqual(result["rows"][-1]["charge"], .25)
+        with self.assertRaisesRegex(ValueError, "disagrees"):
+            self.plan()
 
-    def test_no_cost_anchor_refuses(self):
-        self.cost = [row for row in self.cost if row["start"] >= self.after_gap]
-        with self.assertRaisesRegex(ValueError, "anchor"):
+    def test_no_adjacent_cost_anchor_refuses(self):
+        self.cost = [row for row in self.cost
+                     if row["start"] != self.origin + 9*H]
+        self.energy = [row for row in self.energy
+                       if row["start"] != self.origin + 9*H]
+        with self.assertRaisesRegex(ValueError, "adjacent cost anchor"):
             self.plan()
 
     def test_energy_gap_refuses_instead_of_guessing(self):
