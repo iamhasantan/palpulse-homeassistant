@@ -44,6 +44,7 @@ def _public_saved(saved):
         "total_rows": len(plan.get("rows", [])),
         "resume_required": saved.get("status") in INCOMPLETE,
         "day_recalculation": bool(saved.get("day_recalculation")),
+        "automatic_energy_reprice": saved.get("private_beta_automatic_reprice"),
         "legacy_recovery": (
             "verified" if (saved.get("private_beta_recovery") or {}).get("outcome")
             == "verified_same_pricing" else None
