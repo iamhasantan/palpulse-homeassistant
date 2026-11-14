@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.0b1
+
+### Cost recovery and Recorder baseline integrity
+
+- Recognise migrated Recorder cost histories where cumulative `state` and `sum` use different but independently verified baselines. Confirm the offset against the adjacent earlier cost hour and its recorded increment, without assuming that `state == sum` for all valid historical data.
+- Preserve both verified cumulative monetary counters during backup-first repair. Existing original hourly charges and the anchor's values remain untouched. Refuse unexplained counter-offset changes, resets or missing original evidence.
+- Show the exact blocked/verified cost-anchor timestamp, state, sum, offset, prior-hour values, recorded change and refusal reason in the **Self-heal missing electricity costs** read-only assessment. When assessment is blocked, show **Not assessed**, not a misleading count of zero recoverable hours.
+- Recheck both the anchor `state` and `sum` before any repair or interrupted-journal resume. Retain existing digest, Recorder-inclusive backup, exact-target verification, crash-resumable journalling and no-double-charge safeguards.
+- Extend tests for consistent migrated offsets, inconsistent or missing evidence, changing monetary counters, protected backup, original-row preservation and crash recovery.
+
+This beta does **not** rewrite arbitrary cost baselines, backfill unavailable energy or bypass billing safety checks. If a cost anchor is still blocked after upgrading, read the detailed evidence first and do not force a reset. Home Assistant Core 2026.11.1+ is required.
+
 ## 0.9
 
 ### Feature preview
