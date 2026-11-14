@@ -485,6 +485,13 @@ async def apply_cost_reconciliation(
                     raise ValueError("A migration started during reconciliation")
                 if writer._pending and not (day_recalculation or _queued_hours_covered(writer._pending, plan)):
                     raise ValueError("An unverified pending cost hour cannot be retired safely")
+                if day_recalculation and any(
+                    int(job["start"]) < plan["start_utc"] for job in writer._pending
+                ):
+                    raise ValueError(
+                        "An earlier pending cost job appeared during the backup; "
+                        "no historical costs were changed"
+                    )
                 if not incomplete:
                     # Detect a live measurement, plan edit or Recorder change
                     # while backup was running; do not write on stale evidence.
