@@ -43,6 +43,7 @@ def _public_saved(saved):
         "rows_committed": int(saved.get("rows_committed", 0)),
         "total_rows": len(plan.get("rows", [])),
         "resume_required": saved.get("status") in INCOMPLETE,
+        "day_recalculation": bool(saved.get("day_recalculation")),
         "last_error": saved.get("last_error"),
         "failed_stage": saved.get("failed_stage"),
     }
@@ -130,6 +131,16 @@ async def assess_changed_energy(hass, entry) -> dict:
             "reason": "There is no interrupted repair to inspect",
         }
     plan = saved.get("plan") or {}
+    if saved.get("day_recalculation"):
+        return {
+            "status": "day_energy_changed", "can_replan": False,
+            "reason": (
+                "This day-level repair requires the same fully verified energy "
+                "as its saved original preview. Resume the journal if evidence "
+                "is unchanged; if Recorder energy changed, review and resolve "
+                "the interrupted repair before starting a new daily preview"
+            ),
+        }
     if plan.get("repair_safe") is False:
         return {
             "status": "unsafe_original", "can_replan": False,
@@ -163,6 +174,7 @@ async def launch(
     hass, entry, start_day: str | None, end_day: str | None,
     digest: str | None, *, resume: bool = False,
     rebase_energy: bool = False, expected_energy_digest: str | None = None,
+    day_recalculation: bool = False,
 ) -> dict:
     """Return immediately; HA processes the verified Recorder job itself."""
     entry_id = entry.entry_id
@@ -177,6 +189,9 @@ async def launch(
         incomplete = saved.get("status") in INCOMPLETE
 
         if resume:
+            day_recalculation = bool(saved.get("day_recalculation"))
+            if rebase_energy and day_recalculation:
+                return {"started": False, "message": "Day repair needs original energy evidence; resume without energy rebase"}
             if rebase_energy and (
                 not isinstance(expected_energy_digest, str)
                 or len(expected_energy_digest) != 64
@@ -216,9 +231,15 @@ async def launch(
                         ),
                     }
             # The contract and Recorder snapshot must still match the preview.
-            fresh = await preview_cost_reconciliation(
-                hass, entry, start_day, end_day,
-            )
+            if day_recalculation and start_day != end_day:
+                return {"started": False, "message": "Select exactly one completed local billing day"}
+            if day_recalculation:
+                from .cost_reconcile_runtime import preview_single_day_recalculation
+                fresh = await preview_single_day_recalculation(hass, entry, start_day)
+            else:
+                fresh = await preview_cost_reconciliation(
+                    hass, entry, start_day, end_day,
+                )
             if fresh["digest"] != digest:
                 return {
                     "started": False, "message": (
@@ -238,7 +259,7 @@ async def launch(
 
         jobs[entry_id] = {
             "status": "running", "start_date": start_day,
-            "end_date": end_day,
+            "end_date": end_day, "day_recalculation": bool(day_recalculation),
             "rows_committed": int(saved.get("rows_committed", 0)) if incomplete else 0,
             "total_rows": len((saved.get("plan") or {}).get("rows", [])) if incomplete else 0,
             "last_error": None, "stage": "verifying_saved_backup" if incomplete else "creating_backup",
@@ -259,6 +280,7 @@ async def launch(
                     progress=progress, stage=on_stage,
                     allow_energy_rebase=rebase_energy,
                     expected_energy_digest=expected_energy_digest,
+                    day_recalculation=day_recalculation,
                 )
                 jobs[entry_id].update({
                     "status": "complete", "result": result,

@@ -111,6 +111,18 @@ async def preview_cost_reconciliation(
     return result
 
 
+async def preview_single_day_recalculation(hass, entry, day: str) -> dict:
+    """Read-only local-day verification and source-backed per-hour repricing."""
+    from .day_cost import complete_day_plan
+    start, end = billing_range(day, day, hass.config.time_zone)
+    if end > (int(time.time()) // HOUR) * HOUR:
+        raise ValueError("The selected local billing day is not complete")
+    base = await preview_cost_reconciliation(hass, entry, day, day)
+    cost_id = f"{DOMAIN}:powerpal_{entry.data['meter_mac']}_cost"
+    snapshot = await _read(hass, (cost_id,), start - 2 * HOUR, end)
+    return complete_day_plan(base, snapshot.get(cost_id, []), start, end)
+
+
 async def _extend_plan_for_live_tail(
     hass, writer, manager, store, saved: dict,
     current_costs: dict[int, dict],
@@ -132,6 +144,8 @@ async def _extend_plan_for_live_tail(
     )
     if last_original is None:
         raise ValueError("Cannot extend correction without a trusted monetary anchor")
+    if plan.get("day_recalculation") and int(last_original["start"]) != old_end:
+        raise ValueError("The original day-ending cost checkpoint is missing")
     delta = float(plan["last_sum"]) - float(last_original["old_sum"])
     if not math.isfinite(delta):
         raise ValueError("Cannot carry forward a nonfinite historical cost change")
@@ -344,6 +358,7 @@ async def apply_cost_reconciliation(
     hass, entry, start_day: str, end_day: str, digest: str,
     *, progress=None, stage=None,
     allow_energy_rebase=False, expected_energy_digest=None,
+    day_recalculation=False,
 ) -> dict:
     """Backup -> journal -> compare -> commit -> verify, with crash resumption."""
     if not isinstance(digest, str) or len(digest) != 64:
@@ -368,6 +383,9 @@ async def apply_cost_reconciliation(
         saved = await store.async_load() or {}
         incomplete = saved.get("status") in ("prepared", "writing", "verified")
         if incomplete:
+            day_recalculation = bool(saved.get("day_recalculation"))
+            if day_recalculation and allow_energy_rebase:
+                raise ValueError("Recalculate changed energy separately before resuming this day")
             if (
                 saved.get("digest") != digest
                 or saved.get("start_date") != start_day
@@ -402,7 +420,11 @@ async def apply_cost_reconciliation(
                 )
             legacy_needs_audit = "repair_safe" not in plan
         else:
-            plan = await preview_cost_reconciliation(hass, entry, start_day, end_day)
+            plan = (
+                await preview_single_day_recalculation(hass, entry, start_day)
+                if day_recalculation else
+                await preview_cost_reconciliation(hass, entry, start_day, end_day)
+            )
             if plan["digest"] != digest:
                 raise ValueError("Recorder or tariff changed. Preview again before applying")
             if not plan.get("baseline_verified", True):
@@ -427,21 +449,33 @@ async def apply_cost_reconciliation(
             # A reconciliation must reach the current cost checkpoint so the
             # live writer's durable cumulative baseline remains synchronized.
             if writer._last_hour is not None and (
-                not plan["rows"] or writer._last_hour > plan["rows"][-1]["start"]
+                not plan["rows"] or (
+                    writer._last_hour > plan["rows"][-1]["start"]
+                    and not day_recalculation
+                )
             ):
                 raise ValueError("Cost checkpoint lies outside preview. Include the latest day")
-            if writer._pending and not _queued_hours_covered(writer._pending, plan):
+            if writer._pending and not (day_recalculation or _queued_hours_covered(writer._pending, plan)):
                 raise ValueError(
                     "Queued cost jobs include hours this preview cannot independently price. "
                     "Recover their missing energy or review the conflict before proceeding"
                 )
+            if day_recalculation and any(
+                int(job["start"]) < plan["start_utc"] for job in writer._pending
+            ):
+                raise ValueError("Earlier queued cost jobs prevent safe day recalculation")
             # No Recorder mutation until backup has completed and been verified.
             backup_id = await manager._backup("before cost reconciliation")
+            if day_recalculation:
+                # Day mode changes *all* the day's original charges and
+                # requires an explicitly confirmed, readable source backup.
+                await manager._verify_prior_backup(backup_id)
             saved = {
                 "status": "prepared", "digest": digest,
                 "start_date": start_day, "end_date": end_day,
                 "backup_id": backup_id, "plan": plan, "rows_committed": 0,
                 "settings_revision": revision(entry.options),
+                "day_recalculation": bool(day_recalculation),
             }
             await store.async_save(saved)
 
@@ -449,13 +483,24 @@ async def apply_cost_reconciliation(
             async with writer._lock:
                 if manager.busy or (cost_manager and cost_manager.busy):
                     raise ValueError("A migration started during reconciliation")
-                if writer._pending and not _queued_hours_covered(writer._pending, plan):
+                if writer._pending and not (day_recalculation or _queued_hours_covered(writer._pending, plan)):
                     raise ValueError("An unverified pending cost hour cannot be retired safely")
+                if day_recalculation and any(
+                    int(job["start"]) < plan["start_utc"] for job in writer._pending
+                ):
+                    raise ValueError(
+                        "An earlier pending cost job appeared during the backup; "
+                        "no historical costs were changed"
+                    )
                 if not incomplete:
                     # Detect a live measurement, plan edit or Recorder change
                     # while backup was running; do not write on stale evidence.
-                    current = await preview_cost_reconciliation(
-                        hass, entry, start_day, end_day,
+                    current = (
+                        await preview_single_day_recalculation(hass, entry, start_day)
+                        if day_recalculation else
+                        await preview_cost_reconciliation(
+                            hass, entry, start_day, end_day,
+                        )
                     )
                     if current["digest"] != digest:
                         raise ValueError("Recorder changed during backup. Preview again")
@@ -464,9 +509,13 @@ async def apply_cost_reconciliation(
                     # Require the still-selected contract to yield an identical
                     # preview when no rows have been committed yet.
                     if saved.get("rows_committed", 0) == 0:
-                        current = await preview_cost_reconciliation(
+                        current = (
+                        await preview_single_day_recalculation(hass, entry, start_day)
+                        if day_recalculation else
+                        await preview_cost_reconciliation(
                             hass, entry, start_day, end_day,
                         )
+                    )
                         if current["digest"] != digest:
                             raise ValueError("Tariff or Recorder changed. Review journal")
                 cost_id = writer.statistic_id
@@ -534,6 +583,30 @@ async def apply_cost_reconciliation(
                 }
                 if stage is not None:
                     stage("protecting_new_live_costs")
+                if day_recalculation:
+                    if (writer._last_hour is None or
+                            writer._last_hour < plan["end_utc"] - HOUR):
+                        raise ValueError("Live monetary checkpoint predates this billing day")
+                    anchor = current_costs.get(int(plan["start_utc"]) - HOUR)
+                    if (anchor is None or
+                            not _equal(anchor.get("sum"), plan["anchor_sum"]) or
+                            not _equal(anchor.get("state"), plan["anchor_state"])):
+                        raise ValueError("Immutable preceding cost anchor changed; no writes made")
+                    final = current_costs.get(plan["end_utc"] - HOUR)
+                    last_plan_row = next(
+                        item for item in reversed(plan["rows"])
+                        if int(item["start"]) == plan["end_utc"] - HOUR
+                    )
+                    old_final = bool(final) and (
+                        _equal(final.get("sum"), plan["final_old_sum"]) and
+                        _equal(final.get("state"), plan["final_old_state"])
+                    )
+                    new_final = bool(final) and (
+                        _equal(final.get("sum"), last_plan_row["new_sum"]) and
+                        _equal(final.get("state"), last_plan_row["new_state"])
+                    )
+                    if not (old_final or new_final):
+                        raise ValueError("Day-ending cost row changed outside protected journal")
                 await _extend_plan_for_live_tail(
                     hass, writer, manager, store, saved, current_costs,
                 )

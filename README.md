@@ -42,6 +42,7 @@ Built for users who want greater control over their electricity data, PalPulse c
 - Preview and validate historical data before making changes.
 - Backup-first import, recovery and rollback workflows.
 - Tools for reviewing and repairing independently verifiable historical gaps.
+- Preview and recalculate a complete local billing day's electricity costs from verified energy and the dated tariff, with backup-first cumulative rebase of later recorded charges. See [Full-day cost recalculation](docs/day-cost-recalculation.md).
 - Auditable corrections with preserved original records and recovery journals.
 
 ### Integrated management dashboard

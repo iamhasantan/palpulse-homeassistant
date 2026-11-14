@@ -793,5 +793,157 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.manager._verify_prior_backup.assert_awaited_once()
 
 
+    def _make_day_repair_evidence(self, *, include_tail=True):
+        # Pre-day cumulative anchor, an original last-day row, and two
+        # later cost hours. Missing original hours inside the selected day
+        # must be repriced, not silently treated as $0.
+        self.cost_rows[self.start - 3600] = {
+            "start": self.start - 3600, "state": 0.6,
+            "sum": 0.6, "change": .20,
+        }
+        if include_tail:
+            for i in (0, 1):
+                stamp = self.end + i * 3600
+                self.cost_rows[stamp] = {
+                    "start": stamp, "state": 2.85 + i * .20,
+                    "sum": 2.85 + i * .20, "change": .20,
+                }
+            self.writer._last_hour = self.end + 3600
+            self.writer._sum = 3.05
+
+    async def test_day_preview_shows_verified_hourly_charges_without_writes(self):
+        self._make_day_repair_evidence()
+        before = {k: dict(v) for k, v in self.cost_rows.items()}
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        self.assertTrue(plan["day_recalculation"])
+        self.assertEqual(plan["day_hours"], 24)
+        self.assertEqual(len(plan["hourly_preview"]), 24)
+        self.assertEqual(plan["hourly_preview"][0]["kwh"], 2.0)
+        self.assertIsNone(plan["hourly_preview"][1]["original_cost"])
+        self.assertAlmostEqual(plan["recalculated_daily_cost"], 10.34297, places=5)
+        self.assertEqual(before, self.cost_rows)
+        self.manager._backup.assert_not_awaited()
+
+    async def test_day_reprice_shifts_live_tail_and_preserves_later_charges(self):
+        self._make_day_repair_evidence()
+        prior_tail = self.cost_rows[self.end + 3600]["sum"]
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        report = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            plan["digest"], day_recalculation=True,
+        )
+        self.assertTrue(report["applied"])
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertEqual(self.manager._verify_prior_backup.await_count, 2)
+        day_final = self.cost_rows[self.end - 3600]["sum"]
+        delta = day_final - 2.65
+        self.assertAlmostEqual(
+            self.cost_rows[self.end + 3600]["sum"], prior_tail + delta,
+        )
+        self.assertAlmostEqual(
+            self.cost_rows[self.end + 3600]["sum"] - self.cost_rows[self.end]["sum"],
+            0.20,
+        )
+        self.assertAlmostEqual(self.writer._sum, prior_tail + delta)
+        self.assertEqual(self.writer._last_hour, self.end + 3600)
+        self.assertEqual(self.cost_rows[self.start - 3600]["sum"], 0.6)
+
+    async def test_day_refuses_missing_meter_hour_without_backup(self):
+        self._make_day_repair_evidence()
+        self.energy_rows.pop(self.start + 3 * 3600)
+        with self.assertRaisesRegex(ValueError, "Every local billing hour"):
+            await runtime.preview_single_day_recalculation(
+                self.hass, self.entry, "2026-11-09",
+            )
+        self.manager._backup.assert_not_awaited()
+
+    async def test_day_refuses_missing_prior_monetary_anchor(self):
+        with self.assertRaisesRegex(ValueError, "Previous billing hour"):
+            await runtime.preview_single_day_recalculation(
+                self.hass, self.entry, "2026-11-09",
+            )
+        self.manager._backup.assert_not_awaited()
+
+    async def test_day_backup_failure_does_not_touch_recorder(self):
+        self._make_day_repair_evidence()
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        self.manager._backup.side_effect = RuntimeError("No verified backup")
+        before = {k: dict(v) for k, v in self.cost_rows.items()}
+        with self.assertRaisesRegex(RuntimeError, "verified backup"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                plan["digest"], day_recalculation=True,
+            )
+        self.assertEqual(self.cost_rows, before)
+        self.assertEqual(self.write_calls, 0)
+
+    async def test_day_resume_after_partial_batch_never_double_charges(self):
+        self._make_day_repair_evidence(include_tail=False)
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                plan["digest"], day_recalculation=True,
+            )
+        stored = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(stored["day_recalculation"], True)
+        self.assertEqual(stored["status"], "writing")
+        self.fail_on_call = None
+        result = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            plan["digest"], day_recalculation=True,
+        )
+        self.assertTrue(result["applied"])
+        self.assertAlmostEqual(self.writer._sum, 10.34297 + .6, places=5)
+        self.assertEqual(self.manager._backup.await_count, 1)
+
+    async def test_day_migrated_state_sum_offset_preserved(self):
+        self._make_day_repair_evidence(include_tail=False)
+        self.cost_rows[self.start - 2 * 3600] = {
+            "start": self.start - 2 * 3600,
+            "state": 0.4, "sum": 0.4, "change": .20,
+        }
+        self.cost_rows[self.start - 3600]["change"] = .20
+        for r in self.cost_rows.values():
+            r["state"] += 8.125
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        self.assertAlmostEqual(
+            plan["rows"][-1]["new_state"] - plan["rows"][-1]["new_sum"], 8.125,
+        )
+        await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            plan["digest"], day_recalculation=True,
+        )
+        self.assertAlmostEqual(
+            self.cost_rows[self.end - 3600]["state"]
+            - self.cost_rows[self.end - 3600]["sum"], 8.125,
+        )
+
+    async def test_day_explicitly_refuses_unexpected_tail_change(self):
+        self._make_day_repair_evidence()
+        plan = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09",
+        )
+        # Live checkpoint must agree with Recorder, not just a chosen tariff.
+        self.writer._sum = 999.0
+        with self.assertRaisesRegex(ValueError, "saved live cost checkpoint"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                plan["digest"], day_recalculation=True,
+            )
+        self.assertEqual(self.write_calls, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
