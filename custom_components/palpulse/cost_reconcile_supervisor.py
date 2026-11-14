@@ -193,6 +193,17 @@ async def auto_resume_private_beta_journal(hass, entry) -> dict:
     result = await launch(
         hass, entry, None, None, None, resume=True,
     )
+    if not result.get("started"):
+        # No worker was started. Record the real refusal so the panel does
+        # not keep showing the original error from an earlier beta.
+        latest = await store.async_load() or {}
+        marker = latest.get("private_beta_startup_retry")
+        if (latest.get("status") in INCOMPLETE
+                and isinstance(marker, dict)
+                and marker.get("key") == attempt_key):
+            marker["status"] = "blocked"
+            marker["reason"] = str(result.get("message") or "Recovery refused")[:500]
+            await store.async_save(latest)
     return {
         "status": "running" if result.get("started") else "blocked",
         "message": result.get("message"),
