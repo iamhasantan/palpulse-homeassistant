@@ -44,8 +44,26 @@ def prove_unchanged_pricing(saved, energy_rows, options, zone_name):
             or any(int(r["start"]) != start + i * HOUR
                    for i, r in enumerate(rows))):
         raise ValueError("Original cost plan does not cover consecutive approved hours")
-    if plan.get("tail_carried_forward"):
-        raise ValueError("The original repair already extends into later cost hours")
+    tail = [r for r in plan.get("rows", []) if int(r["start"]) >= end]
+    if bool(tail) != bool(plan.get("tail_carried_forward")):
+        raise ValueError("Live-tail metadata differs from the saved plan")
+    if len(plan.get("rows", [])) > MAX_PRIVATE_AUDIT_HOURS * 3:
+        raise ValueError("Saved repair is too large for private-beta recovery")
+    if tail:
+        delta = float(rows[-1]["new_sum"]) - float(rows[-1]["old_sum"])
+        if not math.isfinite(delta):
+            raise ValueError("Original daily correction has no finite carried difference")
+        for row in tail:
+            if (row.get("source") != "carry_forward"
+                    or not all(_same(row.get(k), row.get(k)) for k in (
+                        "old_sum", "old_state", "new_sum", "new_state"))
+                    or not _same(float(row["new_sum"]) - float(row["old_sum"]), delta)
+                    or not _same(float(row["new_state"]) - float(row["old_state"]), delta)):
+                raise ValueError(
+                    "Saved live-tail rebase does not preserve original hourly charges"
+                )
+        if not _same(plan.get("last_sum"), tail[-1].get("new_sum")):
+            raise ValueError("Saved live-tail checkpoint does not reconcile")
     if not plan.get("repair_safe", False) or not plan.get("baseline_verified", False):
         raise ValueError("Original repair was not independently marked safe")
     if any(r.get("source") != "verified" for r in rows):
@@ -123,7 +141,8 @@ def prove_unchanged_pricing(saved, energy_rows, options, zone_name):
             raise ValueError(
                 f"Original cumulative monetary target differs at UTC {stamp}"
             )
-    if (not _same(plan.get("last_sum"), rebuilt.get("last_sum"))
+    original_final_sum = rows[-1]["new_sum"] if tail else plan.get("last_sum")
+    if (not _same(original_final_sum, rebuilt.get("last_sum"))
             or plan.get("last_supply_date") != rebuilt.get("last_supply_date")
             or plan.get("free_used") != rebuilt.get("free_used")
             or plan.get("free_uncertain_dates") != rebuilt.get("free_uncertain_dates")):
@@ -152,6 +171,7 @@ async def verify_private_journal(hass, entry, saved):
     if importer is None or writer is None:
         raise ValueError("Meter or cost Recorder is unavailable for verification")
     start, end = int(plan["start_utc"]), int(plan["end_utc"])
+    cost_end = max(end, max(int(row["start"]) for row in rows) + HOUR)
     # Wait until previously queued recorder work has completed before asking
     # whether a row is missing, still original, or already exactly corrected.
     from homeassistant.helpers.recorder import get_instance
@@ -160,7 +180,7 @@ async def verify_private_journal(hass, entry, saved):
         async with writer._lock:
             records = await _read(
                 hass, (importer.statistic_id, writer.statistic_id),
-                start - HOUR, end,
+                start - HOUR, cost_end,
             )
             evidence = prove_unchanged_pricing(
                 saved, records.get(importer.statistic_id, []),
