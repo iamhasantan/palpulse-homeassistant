@@ -581,6 +581,103 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.cost_rows[self.end-3600]["sum"],
                                saved["plan"]["last_sum"], places=5)
 
+    async def _make_startup_retry_journal(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["rows_committed"], 12)
+        saved["last_error"] = (
+            "ValueError: Meter energy changed since this cost plan was "
+            "prepared. Select Assess changed energy to review which hours need repricing"
+        )
+        saved["failed_stage"] = "verifying_original_backup"
+        return saved
+
+    async def test_private_beta_startup_triggers_only_previously_approved_journal(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        saved = await self._make_startup_retry_journal()
+        for stamp in self.energy_rows:
+            if stamp >= self.start + 13 * 3600:
+                self.energy_rows[stamp]["sum"] += .5
+                self.energy_rows[stamp]["state"] += .5
+        self.entry.options["private_beta_auto_reprice"] = True
+        spawned = []
+        self.hass.async_create_task = lambda coro: (
+            spawned.append(asyncio.create_task(coro)) or spawned[-1]
+        )
+        result = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(result["status"], "running", result)
+        self.assertEqual(len(spawned), 1)
+        marker = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"][
+            "private_beta_startup_retry"
+        ]
+        self.assertTrue(marker["source_changed"])
+        await asyncio.gather(*spawned)
+        done = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(done["status"], "complete", done)
+        self.assertEqual(done["rows_committed"], 24)
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertTrue(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["private_beta_automatic_reprice"]["verified"])
+
+    async def test_private_beta_startup_never_initiates_unapproved_job(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        self.entry.options["private_beta_auto_reprice"] = True
+        result = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(result["status"], "idle")
+        self.manager._backup.assert_not_awaited()
+        self.assertEqual(self.write_calls, 0)
+
+    async def test_private_beta_startup_optout_and_mismatched_errors(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        saved = await self._make_startup_retry_journal()
+        self.entry.options["private_beta_auto_reprice"] = False
+        disabled = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(disabled["status"], "disabled")
+        self.entry.options["private_beta_auto_reprice"] = True
+        saved["last_error"] = "An unrelated verification failure"
+        manual = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(manual["status"], "requires_manual_review")
+        self.assertEqual(self.manager._backup.await_count, 1)
+        self.assertEqual(self.write_calls, 2)
+
+    async def test_private_beta_startup_single_attempt_per_source_fingerprint(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        saved = await self._make_startup_retry_journal()
+        # A genuine tariff change must block. Do not retry a failed
+        # repair endlessly at each config reload or HA reboot.
+        self.entry.options["private_beta_auto_reprice"] = True
+        self.entry.options["daily_supply_cents"] += 1.0
+        first = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(first["status"], "blocked")
+        second = await supervisor.auto_resume_private_beta_journal(
+            self.hass, self.entry,
+        )
+        self.assertEqual(second["status"], "already_checked")
+        self.assertEqual(self.manager._backup.await_count, 1)
+        self.assertEqual(self.write_calls, 2)
+
     async def test_private_beta_automatically_repairs_verified_energy_drift(self):
         plan = await self.preview()
         self.fail_on_call = 2
