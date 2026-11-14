@@ -195,5 +195,68 @@ class MissingCostRepairTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(old["backup_id"], "old")
 
 
+    async def test_verified_migrated_offset_is_repaired_without_resetting_state(self):
+        for row in self.cost.values():
+            row["state"] += 7.125
+        before_anchor = dict(self.cost[self.start + HOUR])
+        report = await runtime.preview(self.hass, self.entry)
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["anchor_diagnostic"]["status"], "verified_offset")
+        result = await runtime.apply(
+            self.hass, self.entry, confirm=True, digest=report["digest"],
+        )
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.cost[self.start + HOUR], before_anchor)
+        repaired = self.cost[self.start + 2*HOUR]
+        self.assertAlmostEqual(repaired["sum"], 2.4048)
+        self.assertAlmostEqual(repaired["state"], 9.5298)
+        self.assertAlmostEqual(
+            self.cost[self.start + 4*HOUR]["state"]
+            - self.cost[self.start + 4*HOUR]["sum"], 7.125,
+        )
+        self.assertAlmostEqual(self.writer._sum, 2.4048)
+        self.manager._verify_prior_backup.assert_awaited_once()
+
+    async def test_invalid_anchor_is_diagnosed_without_a_backup_or_write(self):
+        self.cost[self.start + HOUR]["state"] += 7.125
+        report = await runtime.preview(self.hass, self.entry)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["missing_hours"], 0)
+        self.assertIn("Original cost anchor", report["reason"])
+        self.assertEqual(
+            report["anchor_diagnostic"]["hour_utc"], self.start + HOUR,
+        )
+        self.assertEqual(
+            report["anchor_diagnostic"]["previous_hour_utc"], self.start,
+        )
+        with self.assertRaisesRegex(ValueError, "anchor"):
+            await runtime.apply(self.hass, self.entry, confirm=True)
+        self.assertEqual(self.write_calls, 0)
+        self.manager._backup.assert_not_awaited()
+
+    async def test_migrated_anchor_mutated_during_backup_refuses(self):
+        for row in self.cost.values():
+            row["state"] += 7.125
+        async def mutate(_reason):
+            self.cost[self.start + HOUR]["state"] += .01
+            return "backup-verified"
+        self.manager._backup.side_effect = mutate
+        with self.assertRaisesRegex(ValueError, "changed during backup"):
+            await runtime.apply(self.hass, self.entry, confirm=True)
+        self.assertEqual(self.write_calls, 0)
+
+    async def test_interrupted_repair_refuses_changed_anchor_state(self):
+        self.fail_one_write = True
+        report = await runtime.preview(self.hass, self.entry)
+        with self.assertRaisesRegex(RuntimeError, "Simulated"):
+            await runtime.apply(
+                self.hass, self.entry, confirm=True, digest=report["digest"],
+            )
+        self.cost[self.start + HOUR]["state"] += .01
+        with self.assertRaisesRegex(ValueError, "anchor state or sum changed"):
+            await runtime.apply(self.hass, self.entry, confirm=True)
+        self.assertEqual(self.write_calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

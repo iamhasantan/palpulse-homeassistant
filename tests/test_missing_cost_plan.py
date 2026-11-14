@@ -141,5 +141,67 @@ class MissingCostPlanTests(unittest.TestCase):
         self.assertNotEqual(before, after)
 
 
+    def test_migrated_anchor_offset_requires_original_counter_evidence(self):
+        # HA can store a migrated cumulative state at a different zero
+        # baseline from its long-term sum. A consistent offset is not a reset.
+        for row in self.cost:
+            row["state"] += 7.125
+        result = self.plan()
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["anchor_diagnostic"]["status"], "verified_offset")
+        self.assertAlmostEqual(result["anchor_state"] - result["anchor_sum"], 7.125)
+        self.assertEqual(result["anchor_diagnostic"]["recorded_change"], .2024)
+        self.assertTrue(all(
+            abs(row["new_state"] - row["new_sum"] - 7.125) < 1e-6
+            for row in result["rows"]
+        ))
+
+    def test_different_offsets_at_anchor_are_refused_with_diagnostics(self):
+        # Only the anchor is corrupt; the preceding hour cannot corroborate.
+        self.cost[9]["state"] += 7.125
+        with self.assertRaises(plans.InvalidCostAnchor) as caught:
+            self.plan()
+        details = caught.exception.details
+        self.assertEqual(details["status"], "blocked")
+        self.assertEqual(details["hour_utc"], self.origin + 9*H)
+        self.assertAlmostEqual(details["state_sum_offset"], 7.125)
+        self.assertEqual(details["previous_hour_utc"], self.origin + 8*H)
+        self.assertIn("offset changed", str(caught.exception))
+
+    def test_migrated_anchor_without_previous_hour_remains_blocked(self):
+        for row in self.cost:
+            row["state"] += 7.125
+        self.cost = [row for row in self.cost
+                     if row["start"] != self.origin + 8*H]
+        # Remove the corresponding energy row too. Otherwise the missing
+        # *cost* at 08:00 becomes the earliest gap and changes the anchor.
+        self.energy = [row for row in self.energy
+                       if row["start"] != self.origin + 8*H]
+        with self.assertRaisesRegex(plans.InvalidCostAnchor, "adjacent earlier"):
+            self.plan()
+
+    def test_migrated_anchor_hour_change_must_match_both_counters(self):
+        for row in self.cost:
+            row["state"] += 7.125
+        self.cost[9]["change"] = .777
+        with self.assertRaisesRegex(
+            plans.InvalidCostAnchor, "disagrees with both"
+        ):
+            self.plan()
+
+    def test_changed_offset_after_gap_refuses_rewrite(self):
+        for row in self.cost:
+            row["state"] += 7.125
+        # A later original row may have been reset by unrelated migration.
+        self.cost[10]["state"] -= 7.125
+        with self.assertRaisesRegex(ValueError, "offset changes"):
+            self.plan()
+
+    def test_finite_equal_anchor_preserves_existing_behavior(self):
+        result = self.plan()
+        self.assertEqual(result["anchor_diagnostic"]["status"], "verified_equal")
+        self.assertAlmostEqual(result["anchor_state"], result["anchor_sum"])
+
+
 if __name__ == "__main__":
     unittest.main()

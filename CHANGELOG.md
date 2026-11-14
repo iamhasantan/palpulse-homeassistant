@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.0.1b1
+
+### What's Changed
+
+#### Cost recovery and Recorder baseline integrity
+
+- Recognise migrated Recorder cost histories where cumulative `state` and `sum` use different but independently verified baselines. Confirm the offset against the adjacent earlier cost hour and its recorded increment, without assuming that `state == sum` for all valid historical data.
+- Preserve both verified cumulative monetary counters during backup-first repair. Existing original hourly charges and the anchor's values remain untouched. Refuse unexplained counter-offset changes, resets or missing original evidence.
+- Show the exact blocked/verified cost-anchor timestamp, state, sum, offset, prior-hour values, recorded change and refusal reason in the **Self-heal missing electricity costs** read-only assessment. When assessment is blocked, show **Not assessed**, not a misleading count of zero recoverable hours.
+- Recheck both the anchor `state` and `sum` before any repair or interrupted-journal resume. Retain existing digest, Recorder-inclusive backup, exact-target verification, crash-resumable journalling and no-double-charge safeguards.
+- Extend tests for consistent migrated offsets, inconsistent or missing evidence, changing monetary counters, protected backup, original-row preservation and crash recovery.
+
+This beta does **not** rewrite arbitrary cost baselines, backfill unavailable energy or bypass billing safety checks. If a cost anchor is still blocked after upgrading, read the detailed evidence first and do not force a reset. Home Assistant Core 2026.11.1+ is required.
+
 ## 0.9
 
 ### Feature preview
@@ -293,7 +307,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
 - No existing historical energy or cost gaps are automatically repaired by this release. Never re-run old history imports just to fix a gap.
 - Cost estimates are not billing-grade. Changes in tariff within an hour are conservatively left unpriced rather than estimated; verify actual plans and charges with the retailer.
 
-## 0.1.0b15
+## 0.1.0.1b15
 
 ### What's Changed
 
@@ -338,7 +352,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   compare charges against actual retailer bills before treating the cost
   statistics as billing-grade.
 
-## 0.1.0b14
+## 0.1.0.1b14
 
 ### What's Changed
 
@@ -393,7 +407,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   run import/backup actions during readiness checks.
 - Add regression tests for pending/ready/bad cost states and GUI retry.
 
-## 0.1.0b13
+## 0.1.0.1b13
 
 ### What's Changed
 
@@ -439,7 +453,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   **Devices & services > Integrations > PalPulse > Configure** navigation.
 - Keep import/undo confirmation, backup checks and recorder history unchanged.
 
-## 0.1.0b12
+## 0.1.0.1b12
 
 ### What's Changed
 
@@ -471,7 +485,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   a complete Recorder-inclusive backup.
 
 
-## 0.1.0b11
+## 0.1.0.1b11
 
 ### What's Changed
 
@@ -506,7 +520,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   live HA validation against Recorder data before using Import.
 
 
-## 0.1.0b10 (experimental, opt-in)
+## 0.1.0.1b10 (experimental, opt-in)
 
 ### What's Changed
 
@@ -745,7 +759,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
 - Existing dropped records are not automatically recovered. Start with a
   complete, valid new UTC hour before checking historical statistics.
 
-## Initial beta development (0.1.0b1, unpublished)
+## Initial beta development (0.1.0.1b1, unpublished)
 
 - Build a HACS-installable PalPulse companion integration with UI configuration
   for a specific Powerpal BLE device.
