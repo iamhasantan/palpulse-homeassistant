@@ -22,6 +22,72 @@ EPS = 1e-5
 MAX_HOURS = 168
 
 
+class InvalidCostAnchor(ValueError):
+    """An immutable Recorder cost anchor cannot safely ground a rebase."""
+
+    def __init__(self, reason, details):
+        super().__init__(f"Original cost anchor is invalid: {reason}")
+        self.details = details
+
+
+def validate_cost_anchor(costs, stamp):
+    """Validate both cumulative counters without assuming their baselines equal.
+
+    Home Assistant can retain a constant state-versus-sum offset when data has
+    been migrated. We accept that offset ONLY when an adjacent earlier cost
+    row independently proves it, both counters advance by the actual hourly
+    change, and neither counter resets. Otherwise leave Recorder untouched.
+    """
+    row = costs[stamp]
+    state, total = finite(row, "state"), finite(row, "sum")
+    prior = costs.get(stamp - HOUR)
+    prior_state = finite(prior, "state") if prior is not None else None
+    prior_sum = finite(prior, "sum") if prior is not None else None
+    change = finite(row, "change")
+    offset = state - total if state is not None and total is not None else None
+    details = {
+        "hour_utc": stamp,
+        "state": state, "sum": total, "state_sum_offset": offset,
+        "previous_hour_utc": stamp - HOUR if prior is not None else None,
+        "previous_state": prior_state, "previous_sum": prior_sum,
+        "recorded_change": change, "status": "blocked",
+    }
+
+    def refuse(reason):
+        details["reason"] = reason
+        raise InvalidCostAnchor(reason, details)
+
+    if state is None or total is None:
+        refuse("original state or sum is missing or non-finite")
+    if abs(offset) <= EPS:
+        details["status"] = "verified_equal"
+        details["reason"] = "Original state and sum share the same baseline"
+        return state, total, details
+
+    if prior_state is None or prior_sum is None:
+        refuse("unequal state and sum require an adjacent earlier cost row")
+    previous_offset = prior_state - prior_sum
+    details["previous_state_sum_offset"] = previous_offset
+    if abs(previous_offset - offset) > EPS:
+        refuse("state-to-sum offset changed at the anchor")
+    if change is None or change < -EPS:
+        refuse("anchor hourly change is missing or negative")
+    state_delta = state - prior_state
+    sum_delta = total - prior_sum
+    details["state_delta"] = state_delta
+    details["sum_delta"] = sum_delta
+    if state_delta < -EPS or sum_delta < -EPS:
+        refuse("cumulative monetary counter decreased at the anchor")
+    if abs(state_delta - change) > EPS or abs(sum_delta - change) > EPS:
+        refuse("hourly change disagrees with both consecutive cost counters")
+    details["status"] = "verified_offset"
+    details["reason"] = (
+        "Stable migrated state/sum offset independently verified against "
+        "the previous cost hour; both original counters will be preserved"
+    )
+    return state, total, details
+
+
 def finite(row, field):
     try:
         n = float(row[field])
@@ -92,10 +158,9 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
     anchor_stamp = max(anchors)
     if anchor_stamp != start - HOUR:
         raise ValueError("First missing cost hour lacks an adjacent cost anchor")
-    anchor_sum = finite(costs[anchor_stamp], "sum")
-    anchor_state = finite(costs[anchor_stamp], "state")
-    if anchor_sum is None or anchor_state is None or abs(anchor_sum-anchor_state) > EPS:
-        raise ValueError("Original cost anchor is invalid")
+    anchor_state, anchor_sum, anchor_diagnostic = validate_cost_anchor(
+        costs, anchor_stamp,
+    )
 
     # Confirm all hours in the window, including the hour preceding first gap.
     usage = {}
@@ -188,7 +253,9 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
             )
         supply_owner[day] = candidate if candidate is not None else first
 
-    running = Decimal(str(anchor_sum))
+    running_sum = Decimal(str(anchor_sum))
+    running_state = Decimal(str(anchor_state))
+    anchor_offset = anchor_state - anchor_sum
     plan_rows = []
     missing_total = Decimal(0)
     for stamp in range(start, end + HOUR, HOUR):
@@ -203,18 +270,29 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
             source = "meter_tariff"
         else:
             state, total = finite(old, "state"), finite(old, "sum")
-            if state is None or total is None or abs(state - total) > EPS:
-                raise ValueError(f"Invalid existing cost row at UTC {stamp}")
+            if state is None or total is None:
+                raise ValueError(f"Invalid existing cost row at UTC {stamp}: non-finite state or sum")
+            # Preserve each original counter's documented baseline. An
+            # unexplained offset change would be a reset or earlier repair,
+            # not permission to rewrite past cost history.
+            if abs((state - total) - anchor_offset) > EPS:
+                raise ValueError(
+                    f"Existing cost state/sum offset changes at UTC {stamp}; "
+                    "manual review required before any write"
+                )
             observed_change = finite(old, "change")
             if observed_change is None or observed_change < -EPS:
                 raise ValueError(f"Cannot establish original hourly cost at UTC {stamp}")
             prior = costs.get(stamp - HOUR)
             if prior is not None:
                 prior_sum = finite(prior, "sum")
-                if prior_sum is None or abs((total - prior_sum) - observed_change) > EPS:
+                prior_state = finite(prior, "state")
+                if (prior_sum is None or prior_state is None
+                        or abs((total - prior_sum) - observed_change) > EPS
+                        or abs((state - prior_state) - observed_change) > EPS):
                     raise ValueError(
                         f"Original cost change at UTC {stamp} disagrees with "
-                        "consecutive Recorder monetary sums"
+                        "consecutive Recorder monetary state/sum counters"
                     )
             elif Decimal(str(observed_change)) > intended + Decimal(str(EPS)):
                 # Recorder's reported change immediately after a hole might
@@ -228,13 +306,15 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
             # The old monetary row is left as an *increment*; only its
             # cumulative baseline may shift due to independently proven gaps.
             source = "original_charge_retained"
-        running += charge
-        target = round(float(running), 9)
+        running_sum += charge
+        running_state += charge
+        target_sum = round(float(running_sum), 9)
+        target_state = round(float(running_state), 9)
         plan_rows.append({
             "start": stamp,
             "old_sum": finite(old, "sum") if old else None,
             "old_state": finite(old, "state") if old else None,
-            "new_sum": target, "new_state": target,
+            "new_sum": target_sum, "new_state": target_state,
             "charge": round(float(charge), 9),
             "kwh": round(usage[stamp], 9),
             "source": source, "day": day,
@@ -245,6 +325,7 @@ def build_missing_cost_plan(energy_rows, cost_rows, versions, zone_name, *,
         "status": "ready",
         "start_utc": start, "end_utc": end + HOUR,
         "anchor_utc": anchor_stamp, "anchor_sum": anchor_sum,
+        "anchor_state": anchor_state, "anchor_diagnostic": anchor_diagnostic,
         "missing_hours": len(gaps),
         "missing_charges": round(float(missing_total), 9),
         "rows": plan_rows, "last_sum": plan_rows[-1]["new_sum"],
