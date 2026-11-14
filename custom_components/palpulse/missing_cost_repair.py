@@ -20,7 +20,7 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN
 from .cost_reconcile_runtime import _read
 from .cost_reconcile_plan import energy_fingerprint
-from .missing_cost_plan import build_missing_cost_plan, HOUR
+from .missing_cost_plan import build_missing_cost_plan, InvalidCostAnchor, HOUR
 from .panel_settings import revision
 from .tariff_history import CONF_TARIFF_VERSIONS
 
@@ -84,6 +84,11 @@ async def preview(hass, entry) -> dict:
         }
     try:
         plan, _, _ = await _inputs(hass, importer, writer, entry)
+    except InvalidCostAnchor as err:
+        return {
+            "status": "blocked", "missing_hours": 0,
+            "reason": str(err), "anchor_diagnostic": err.details,
+        }
     except (ValueError, KeyError, TypeError) as err:
         return {"status": "blocked", "reason": str(err)}
     if plan.get("status") != "ready":
@@ -95,6 +100,7 @@ async def preview(hass, entry) -> dict:
         "missing_charges": plan["missing_charges"],
         "rows": len(plan["rows"]),
         "preserved_existing_hours": plan["preserved_existing_hours"],
+        "anchor_diagnostic": plan.get("anchor_diagnostic"),
         "legacy_interrupted": old,
         "reason": (
             "A separate incomplete historical journal exists. Explicit repair "
@@ -196,8 +202,15 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                     for row in current.get(writer.statistic_id, [])
                 }
                 anchor = existing.get(int(plan["anchor_utc"]))
-                if anchor is None or not _same(anchor.get("sum"), plan["anchor_sum"]):
-                    raise ValueError("Saved monetary anchor changed; no writes made")
+                if (anchor is None
+                        or not _same(anchor.get("sum"), plan["anchor_sum"])
+                        or not _same(
+                            anchor.get("state"),
+                            plan.get("anchor_state", plan["anchor_sum"]),
+                        )):
+                    raise ValueError(
+                        "Saved monetary anchor state or sum changed; no writes made"
+                    )
                 for item in plan["rows"]:
                     stamp = int(item["start"])
                     row = existing.get(stamp)
