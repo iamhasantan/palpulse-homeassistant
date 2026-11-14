@@ -8,7 +8,8 @@
 
 #### Private-beta interrupted cost journal recovery
 
-- Automatically revalidate a protected 1.0.1b2 cost-repair journal when a settings revision changes, rather than interpreting every integration option edit as an electricity tariff change.
+- **Permanent fix:** New repair journals pin only the dated tariff versions, current contract rates and billing timezone. Unrelated ESPHome, migration and dashboard settings no longer interrupt a valid cost correction, while real tariff changes remain protected.
+- **Private-beta compatibility:** Automatically revalidate a protected 1.0.1b2 cost-repair journal when a settings revision changes, rather than interpreting every integration option edit as an electricity tariff change.
 - Independently recalculate **each originally approved hourly charge** from the currently saved dated tariff, original source energy and the journal's immutable pre-repair monetary records. Only an exact match is eligible for continuation, including TOU, free-energy cap, and daily supply fee.
 - Verify the original and any later live-tail Recorder-inclusive backup, detect source-energy drift and external Recorder edits, and classify original, already corrected, or originally missing rows before rebinding the stale revision.
 - Preserve partially written journals and their original backups when rate evidence changes, a backup is missing, an unrelated Recorder write appears, or any hourly amount differs. Never silently restart, double-charge, or reset a meter checkpoint.
