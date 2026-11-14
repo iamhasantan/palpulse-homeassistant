@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.0.1b5
+
+### What's Changed
+
+#### Automatic private-beta recovery of interrupted cost repairs
+
+- Fix an unattended-recovery gap: **1.0.1b4** could only run its changed-energy audit after the user manually clicked Resume. **1.0.1b5** makes one guarded recovery attempt after Home Assistant and PalPulse's normal cost Recorder have both started.
+- Only existing, previously approved and **partially committed** cost-reconciliation journals with a recorded changed-energy failure are considered. No new date ranges, tariffs, cost repairs or meter histories are approved silently.
+- Reuse the existing independent tariff/energy audit, two-backup recovery, archive, immutable original/target checks, persisted progress and safe interruption handling. No assumption that a changed energy counter means a recoverable financial correction.
+- Persist a per-journal, per-source-fingerprint attempt marker. An unchanged failure is not retried on every integration reload or HA reboot, but genuinely changed energy evidence can trigger a new bounded attempt.
+- Report automatic startup checks and precise early refusals in the Historical cost reconciliation panel rather than displaying only the earlier error.
+- Respect the beta-only opt-out. Normal user/HA Recorder integrity safeguards remain unchanged. Automatic compatibility code remains isolated for review before public launch.
+
 ## 1.0.1b4
 
 ### What's Changed
