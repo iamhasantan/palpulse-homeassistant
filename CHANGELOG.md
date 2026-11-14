@@ -4,7 +4,9 @@
 
 ## 1.0.1b1
 
-### Cost recovery and Recorder baseline integrity
+### What's Changed
+
+#### Cost recovery and Recorder baseline integrity
 
 - Recognise migrated Recorder cost histories where cumulative `state` and `sum` use different but independently verified baselines. Confirm the offset against the adjacent earlier cost hour and its recorded increment, without assuming that `state == sum` for all valid historical data.
 - Preserve both verified cumulative monetary counters during backup-first repair. Existing original hourly charges and the anchor's values remain untouched. Refuse unexplained counter-offset changes, resets or missing original evidence.
