@@ -92,7 +92,8 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.entry = types.SimpleNamespace(
             entry_id="meter-one", data={"meter_mac": MAC},
             options=dict(plan, tariff_plan_start_date="2026-11-09",
-                         tariff_versions=versions),
+                         tariff_versions=versions,
+                         private_beta_auto_reprice=False),
         )
         self.importer = types.SimpleNamespace(
             mac=MAC, statistic_id=self.energy_id, _lock=asyncio.Lock(),
@@ -579,6 +580,78 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.writer._sum, saved["plan"]["last_sum"], places=5)
         self.assertAlmostEqual(self.cost_rows[self.end-3600]["sum"],
                                saved["plan"]["last_sum"], places=5)
+
+    async def test_private_beta_automatically_repairs_verified_energy_drift(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["rows_committed"], 12)
+        self.fail_on_call = None
+        # A later historical import increases one independently evidenced
+        # hour and advances both cumulative counters through the day.
+        for stamp in self.energy_rows:
+            if stamp >= self.start + 13 * 3600:
+                self.energy_rows[stamp]["sum"] += .5
+                self.energy_rows[stamp]["state"] += .5
+        self.entry.options["private_beta_auto_reprice"] = True
+        result = await self.apply(plan["digest"])
+        self.assertTrue(result["applied"])
+        done = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(done["status"], "complete")
+        self.assertTrue(done["private_beta_automatic_reprice"]["verified"])
+        self.assertGreater(done["private_beta_automatic_reprice"]["affected_hours"], 0)
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertIn(done["previous_repair_archive"], MockStore.VALUES)
+        self.assertAlmostEqual(self.writer._sum, done["plan"]["last_sum"], places=6)
+
+    async def test_private_beta_automatic_recovery_refuses_unprovable_hour(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        self.entry.options["private_beta_auto_reprice"] = True
+        del self.energy_rows[self.start + 13 * 3600]
+        before_writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "Automatic cost recovery safely paused"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.write_calls, before_writes)
+        self.assertEqual(self.manager._backup.await_count, 1)
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["rows_committed"], 12)
+        self.assertEqual(saved["status"], "writing")
+
+    async def test_private_beta_automatic_recovery_refuses_external_cost_edit(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        self.entry.options["private_beta_auto_reprice"] = True
+        self.energy_rows[self.start + 13*3600]["change"] = None
+        self.cost_rows[self.start + 11*3600]["sum"] = -899.0
+        before_writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "no longer matches"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.write_calls, before_writes)
+        self.assertEqual(self.manager._backup.await_count, 1)
+
+    async def test_private_beta_automatic_recovery_refuses_unavailable_backup(self):
+        plan = await self.preview()
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await self.apply(plan["digest"])
+        self.fail_on_call = None
+        self.entry.options["private_beta_auto_reprice"] = True
+        self.energy_rows[self.start + 13*3600]["change"] = None
+        self.manager._backup.side_effect = RuntimeError("Cannot back up Recorder")
+        with self.assertRaisesRegex(RuntimeError, "Cannot back up Recorder"):
+            await self.apply(plan["digest"])
+        self.assertEqual(self.manager._backup.await_count, 2)
+        self.assertEqual(MockStore.VALUES[
+            f"palpulse_cost_reconcile_{MAC}"]["status"], "writing")
 
     async def test_energy_drift_with_same_charge_can_safely_resume(self):
         supervisor = importlib.import_module(
