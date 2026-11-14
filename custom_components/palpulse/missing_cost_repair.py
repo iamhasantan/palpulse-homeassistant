@@ -171,7 +171,13 @@ async def apply(hass, entry, *, confirm: bool, digest: str | None = None,
                     # Back up before persisting the plan or touching statistics.
                     backup_id = await manager._backup("before filling verified missing PalPulse costs")
                     await manager._verify_prior_backup(backup_id)
-                    check, _, _ = await _inputs(hass, importer, writer, entry)
+                    try:
+                        check, _, _ = await _inputs(hass, importer, writer, entry)
+                    except InvalidCostAnchor as err:
+                        raise ValueError(
+                            "Recorder cost anchor changed during backup. "
+                            f"No costs modified: {err}"
+                        ) from err
                     if check.get("digest") != plan["digest"]:
                         raise ValueError("Recorder or tariff changed during backup. No costs modified")
                     saved = {
