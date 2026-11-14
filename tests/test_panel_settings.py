@@ -113,6 +113,21 @@ class PanelSettingsTests(unittest.TestCase):
         self.assertEqual(saved["legacy_cost_source_mode"], "daily_reset")
         self.assertNotIn("unrelated_private_setting", settings.visible_settings(saved))
 
+    def test_private_beta_auto_reprice_defaults_enabled_and_can_opt_out(self):
+        initial = settings.visible_settings(plan())
+        self.assertTrue(initial["private_beta_auto_reprice"])
+        disabled = settings.normalize_settings(
+            plan(), {"private_beta_auto_reprice": False},
+            meter="d8a5d6d91964",
+        )
+        self.assertFalse(settings.visible_settings(disabled)["private_beta_auto_reprice"])
+        self.assertNotIn("private_beta_auto_reprice", plan())
+        with self.assertRaisesRegex(ValueError, "automatic cost recovery"):
+            settings.normalize_settings(
+                plan(), {"private_beta_auto_reprice": "false"},
+                meter="d8a5d6d91964",
+            )
+
     def test_revision_detects_simultaneous_edit(self):
         original = plan()
         rev = settings.revision(original)
