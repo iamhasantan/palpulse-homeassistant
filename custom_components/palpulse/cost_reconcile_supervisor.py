@@ -131,6 +131,16 @@ async def assess_changed_energy(hass, entry) -> dict:
             "reason": "There is no interrupted repair to inspect",
         }
     plan = saved.get("plan") or {}
+    if saved.get("day_recalculation"):
+        return {
+            "status": "day_energy_changed", "can_replan": False,
+            "reason": (
+                "This day-level repair requires the same fully verified energy "
+                "as its saved original preview. Resume the journal if evidence "
+                "is unchanged; if Recorder energy changed, review and resolve "
+                "the interrupted repair before starting a new daily preview"
+            ),
+        }
     if plan.get("repair_safe") is False:
         return {
             "status": "unsafe_original", "can_replan": False,
