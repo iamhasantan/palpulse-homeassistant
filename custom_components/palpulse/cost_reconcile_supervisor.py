@@ -17,7 +17,7 @@ from .const import DOMAIN
 from .cost_reconcile_runtime import (
     _equal, _read, apply_cost_reconciliation, preview_cost_reconciliation,
 )
-from .panel_settings import revision
+from .panel_settings import revision, pricing_revision
 
 _LOGGER = logging.getLogger(__name__)
 INCOMPLETE = frozenset(("prepared", "writing", "verified"))
@@ -155,7 +155,12 @@ async def assess_changed_energy(hass, entry) -> dict:
     writer = hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id)
     if importer is None or writer is None:
         raise ValueError("Live meter and cost Recorder must be available")
-    if saved.get("settings_revision") != revision(entry.options):
+    if (
+        saved.get("pricing_revision") != pricing_revision(
+            entry.options, hass.config.time_zone,
+        ) if saved.get("pricing_revision") is not None
+        else saved.get("settings_revision") != revision(entry.options)
+    ):
         return {
             "status": "tariff_changed", "can_replan": False,
             "reason": "The saved tariff was edited since this repair started. "
@@ -210,7 +215,21 @@ async def launch(
             start_day, end_day, digest = (
                 saved.get("start_date"), saved.get("end_date"), saved.get("digest"),
             )
-            if saved.get("settings_revision") != revision(entry.options):
+            if (saved.get("pricing_revision") is not None
+                    and saved["pricing_revision"] != pricing_revision(
+                        entry.options, hass.config.time_zone,
+                    )):
+                return {
+                    "started": False,
+                    "resume_required": True,
+                    "message": (
+                        "The actual historical electricity tariff changed "
+                        "during this protected repair. Review the original "
+                        "journal before any further monetary writes"
+                    ),
+                }
+            if (saved.get("pricing_revision") is None
+                    and saved.get("settings_revision") != revision(entry.options)):
                 # PRIVATE BETA COMPATIBILITY ONLY. Previous versions hashed all
                 # entry options, not just pricing, and strand safe journals when
                 # unrelated options change. Compare the entire original
@@ -256,6 +275,9 @@ async def launch(
                     **proof, "original_settings_revision": previous_revision,
                 }
                 saved["settings_revision"] = current_revision
+                saved["pricing_revision"] = pricing_revision(
+                    entry.options, hass.config.time_zone,
+                )
                 await _store(hass, entry.data["meter_mac"]).async_save(saved)
                 _LOGGER.warning(
                     "PalPulse private-beta legacy journal %s safely "
