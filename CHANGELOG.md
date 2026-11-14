@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Full-day cost recalculation (proposed)
+
+- Add a native **Recalculate an entire billing day** workflow in the Hourly history panel. It previews each hour's verified energy, original charge (when independently verifiable), and date-effective recalculated price.
+- Require a completely recorded 23-, 24-, or 25-hour local billing day, a verified monetary anchor and end-of-day checkpoint. Apply one daily supply fee, the actual free-energy cap and historical TOU bands. Do not guess any missing energy or tariff.
+- Use the existing administrator-confirmed, Recorder-inclusive backup, digest, journal, atomic batch verification and safe resume workflow. Carry the exact end-of-day correction into newer recorded cost totals without changing their original hourly charges.
+- Keep unrelated historical repairs and ESP32 firmware unchanged. Incomplete monetary evidence refuses the repair rather than inventing cost.
+
 ## 1.0.1b1
 
 ### What's Changed
