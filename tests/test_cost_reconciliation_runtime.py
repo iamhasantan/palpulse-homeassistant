@@ -855,7 +855,7 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_day_refuses_missing_meter_hour_without_backup(self):
         self._make_day_repair_evidence()
         self.energy_rows.pop(self.start + 3 * 3600)
-        with self.assertRaisesRegex(ValueError, "Every billing hour"):
+        with self.assertRaisesRegex(ValueError, "Every local billing hour"):
             await runtime.preview_single_day_recalculation(
                 self.hass, self.entry, "2026-11-09",
             )
@@ -908,6 +908,11 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_day_migrated_state_sum_offset_preserved(self):
         self._make_day_repair_evidence(include_tail=False)
+        self.cost_rows[self.start - 2 * 3600] = {
+            "start": self.start - 2 * 3600,
+            "state": 0.4, "sum": 0.4, "change": .20,
+        }
+        self.cost_rows[self.start - 3600]["change"] = .20
         for r in self.cost_rows.values():
             r["state"] += 8.125
         plan = await runtime.preview_single_day_recalculation(
