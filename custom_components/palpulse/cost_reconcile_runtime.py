@@ -576,11 +576,26 @@ async def apply_cost_reconciliation(
                     if (writer._last_hour is None or
                             writer._last_hour < plan["end_utc"] - HOUR):
                         raise ValueError("Live monetary checkpoint predates this billing day")
+                    anchor = current_costs.get(int(plan["start_utc"]) - HOUR)
+                    if (anchor is None or
+                            not _equal(anchor.get("sum"), plan["anchor_sum"]) or
+                            not _equal(anchor.get("state"), plan["anchor_state"])):
+                        raise ValueError("Immutable preceding cost anchor changed; no writes made")
                     final = current_costs.get(plan["end_utc"] - HOUR)
-                    if (final is None
-                            or not _equal(final.get("sum"), plan["final_old_sum"])
-                            or not _equal(final.get("state"), plan["final_old_state"])):
-                        raise ValueError("Original end-of-day monetary record changed; no writes made")
+                    last_plan_row = next(
+                        item for item in reversed(plan["rows"])
+                        if int(item["start"]) == plan["end_utc"] - HOUR
+                    )
+                    old_final = bool(final) and (
+                        _equal(final.get("sum"), plan["final_old_sum"]) and
+                        _equal(final.get("state"), plan["final_old_state"])
+                    )
+                    new_final = bool(final) and (
+                        _equal(final.get("sum"), last_plan_row["new_sum"]) and
+                        _equal(final.get("state"), last_plan_row["new_state"])
+                    )
+                    if not (old_final or new_final):
+                        raise ValueError("Day-ending cost row changed outside protected journal")
                 await _extend_plan_for_live_tail(
                     hass, writer, manager, store, saved, current_costs,
                 )
