@@ -19,7 +19,7 @@ from .const import (
 )
 from .tariff_history import (
     CONF_TARIFF_START, CONF_TARIFF_VERSIONS,
-    upsert_tariff_version, validate_start_date,
+    upsert_tariff_version, validate_start_date, captured_tariff,
 )
 from .pricing import (
     CONF_PRICING_MODE, CONF_FLAT_CENTS, CONF_PEAK_CENTS,
@@ -49,6 +49,25 @@ def revision(options: Mapping[str, object]) -> str:
     """Optimistic concurrency token. Never expose arbitrary entry options."""
     payload = json.dumps(dict(options), sort_keys=True, separators=(",", ":"),
                          default=str).encode("utf-8")
+    return sha256(payload).hexdigest()[:24]
+
+
+def pricing_revision(options: Mapping[str, object], zone_name: str) -> str:
+    """Hash only contract-relevant inputs used by the historical cost plan.
+
+    Normal user changes to meter settings, BLE acknowledgements, migration
+    sources or dashboard options must not strand a running cost repair.
+    Dates, historical tariff versions, current rates and the billing timezone
+    are intentionally pinned. Recorder inputs are independently fingerprinted.
+    """
+    data = {
+        "tariff_versions": options.get(CONF_TARIFF_VERSIONS, []),
+        "current_tariff": captured_tariff(options),
+        "billing_timezone": zone_name,
+    }
+    payload = json.dumps(
+        data, sort_keys=True, separators=(",", ":"), default=str,
+    ).encode("utf-8")
     return sha256(payload).hexdigest()[:24]
 
 
