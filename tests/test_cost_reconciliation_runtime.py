@@ -945,5 +945,175 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.write_calls, 0)
 
 
+
+    async def test_new_journal_survives_unrelated_options_edit_without_legacy_adapter(self):
+        self._make_day_repair_evidence()
+        day = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09"
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        state = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertTrue(state["pricing_revision"])
+        original_revision = state["settings_revision"]
+        self.entry.options["history_ack_disabled"] = True
+        self.fail_on_call = None
+        result = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            day["digest"], day_recalculation=True,
+        )
+        self.assertTrue(result["applied"])
+        self.assertEqual(state["settings_revision"], original_revision)
+        self.assertNotIn("private_beta_recovery", state)
+        self.assertEqual(state["status"], "complete")
+
+    async def test_new_journal_refuses_actual_dated_rate_change(self):
+        self._make_day_repair_evidence()
+        day = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09"
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        from custom_components.palpulse.tariff_history import upsert_tariff_version
+        self.entry.options["peak_cents_per_kwh"] = 44.308
+        self.entry.options["tariff_versions"] = upsert_tariff_version(
+            self.entry.options["tariff_versions"], "2026-11-09",
+            self.entry.options, ZONE.key, today=date(2026, 11, 12),
+        )
+        self.fail_on_call = None
+        previous_writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "Historical tariff inputs changed"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        self.assertEqual(self.write_calls, previous_writes)
+
+    async def _private_beta_interrupted_day(self):
+        supervisor = importlib.import_module(
+            "custom_components.palpulse.cost_reconcile_supervisor"
+        )
+        self._make_day_repair_evidence()
+        original = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09"
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                original["digest"], day_recalculation=True,
+            )
+        self.assertEqual(self.write_calls, 2)
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["status"], "writing")
+        self.assertEqual(saved["rows_committed"], 12)
+        self.assertTrue(saved["plan"]["tail_carried_forward"])
+        # Simulate a journal created by 1.0.1b2, which hashed every option
+        # and had no dedicated pricing revision.
+        saved.pop("pricing_revision", None)
+        return supervisor, saved
+
+    async def test_private_beta_recovers_unrelated_settings_revision_drift(self):
+        supervisor, original = await self._private_beta_interrupted_day()
+        self.fail_on_call = None
+        self.entry.options["history_ack_disabled"] = True
+        from custom_components.palpulse.panel_settings import revision
+        self.assertNotEqual(original["settings_revision"], revision(self.entry.options))
+        started = []
+        self.hass.async_create_task = lambda coro: (
+            started.append(asyncio.create_task(coro)) or started[-1]
+        )
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertTrue(result["started"], result)
+        await asyncio.gather(*started)
+        state = await supervisor.status(self.hass, self.entry)
+        self.assertEqual(state["status"], "complete", state)
+        self.assertAlmostEqual(
+            self.cost_rows[self.end + 3600]["sum"] - self.cost_rows[self.end]["sum"],
+            .20,
+        )
+        self.assertAlmostEqual(self.writer._sum,
+                               self.cost_rows[self.end + 3600]["sum"])
+        saved = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertEqual(saved["private_beta_recovery"]["outcome"],
+                         "verified_same_pricing")
+        self.assertEqual(saved["private_beta_recovery"]["recorder_rows"]["already_corrected"], 12)
+        self.assertEqual(saved["settings_revision"], revision(self.entry.options))
+        self.assertEqual(saved["private_beta_recovery"]["hours"], 24)
+
+    async def test_private_beta_rejects_real_tariff_change(self):
+        supervisor, saved = await self._private_beta_interrupted_day()
+        from custom_components.palpulse.tariff_history import upsert_tariff_version
+        from custom_components.palpulse.panel_settings import revision
+        self.entry.options["peak_cents_per_kwh"] = 44.308
+        self.entry.options["tariff_versions"] = upsert_tariff_version(
+            self.entry.options["tariff_versions"], "2026-11-09",
+            self.entry.options, ZONE.key, today=date(2026, 11, 12),
+        )
+        original_rev = saved["settings_revision"]
+        earlier_writes = self.write_calls
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertFalse(result["started"])
+        self.assertIn("preserved", result["message"])
+        self.assertEqual(self.write_calls, earlier_writes)
+        self.assertEqual(saved["settings_revision"], original_rev)
+        self.assertNotEqual(revision(self.entry.options), original_rev)
+        self.assertEqual(saved["status"], "writing")
+
+    async def test_private_beta_rejects_external_recorder_edit(self):
+        supervisor, saved = await self._private_beta_interrupted_day()
+        self.entry.options["history_ack_disabled"] = True
+        stamp = self.start + 1 * 3600
+        self.cost_rows[stamp]["sum"] += 4.0
+        before = self.write_calls
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertFalse(result["started"])
+        self.assertIn("protected", result["message"].lower())
+        self.assertEqual(self.write_calls, before)
+        self.assertEqual(saved["status"], "writing")
+
+    async def test_private_beta_rejects_changed_energy_even_with_same_tariff(self):
+        supervisor, saved = await self._private_beta_interrupted_day()
+        self.entry.options["history_ack_disabled"] = True
+        self.energy_rows[self.start + 3600]["sum"] += 0.1
+        before = self.write_calls
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertFalse(result["started"])
+        self.assertIn("Energy changed", result["message"])
+        self.assertEqual(self.write_calls, before)
+        self.assertEqual(saved["status"], "writing")
+
+    async def test_private_beta_requires_original_backup_before_rebind(self):
+        supervisor, saved = await self._private_beta_interrupted_day()
+        self.entry.options["history_ack_disabled"] = True
+        self.manager._verify_prior_backup.side_effect = RuntimeError(
+            "Original backup missing"
+        )
+        before = self.write_calls
+        result = await supervisor.launch(
+            self.hass, self.entry, None, None, None, resume=True,
+        )
+        self.assertFalse(result["started"])
+        self.assertIn("backup", result["message"])
+        self.assertEqual(self.write_calls, before)
+        self.assertEqual(saved["status"], "writing")
+
+
 if __name__ == "__main__":
     unittest.main()

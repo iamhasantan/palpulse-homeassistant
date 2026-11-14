@@ -17,7 +17,7 @@ from .const import DOMAIN
 from .cost_reconcile_runtime import (
     _equal, _read, apply_cost_reconciliation, preview_cost_reconciliation,
 )
-from .panel_settings import revision
+from .panel_settings import revision, pricing_revision
 
 _LOGGER = logging.getLogger(__name__)
 INCOMPLETE = frozenset(("prepared", "writing", "verified"))
@@ -44,6 +44,10 @@ def _public_saved(saved):
         "total_rows": len(plan.get("rows", [])),
         "resume_required": saved.get("status") in INCOMPLETE,
         "day_recalculation": bool(saved.get("day_recalculation")),
+        "legacy_recovery": (
+            "verified" if (saved.get("private_beta_recovery") or {}).get("outcome")
+            == "verified_same_pricing" else None
+        ),
         "last_error": saved.get("last_error"),
         "failed_stage": saved.get("failed_stage"),
     }
@@ -151,7 +155,12 @@ async def assess_changed_energy(hass, entry) -> dict:
     writer = hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id)
     if importer is None or writer is None:
         raise ValueError("Live meter and cost Recorder must be available")
-    if saved.get("settings_revision") != revision(entry.options):
+    if (
+        saved.get("pricing_revision") != pricing_revision(
+            entry.options, hass.config.time_zone,
+        ) if saved.get("pricing_revision") is not None
+        else saved.get("settings_revision") != revision(entry.options)
+    ):
         return {
             "status": "tariff_changed", "can_replan": False,
             "reason": "The saved tariff was edited since this repair started. "
@@ -206,13 +215,75 @@ async def launch(
             start_day, end_day, digest = (
                 saved.get("start_date"), saved.get("end_date"), saved.get("digest"),
             )
-            if saved.get("settings_revision") != revision(entry.options):
+            if (saved.get("pricing_revision") is not None
+                    and saved["pricing_revision"] != pricing_revision(
+                        entry.options, hass.config.time_zone,
+                    )):
                 return {
-                    "started": False, "message": (
-                        "Tariff settings changed since the interrupted repair. "
-                        "No Recorder rows were changed by this request"
+                    "started": False,
+                    "resume_required": True,
+                    "message": (
+                        "The actual historical electricity tariff changed "
+                        "during this protected repair. Review the original "
+                        "journal before any further monetary writes"
                     ),
                 }
+            if (saved.get("pricing_revision") is None
+                    and saved.get("settings_revision") != revision(entry.options)):
+                # PRIVATE BETA COMPATIBILITY ONLY. Previous versions hashed all
+                # entry options, not just pricing, and strand safe journals when
+                # unrelated options change. Compare the entire original
+                # independently priced plan to the current historical tariff,
+                # current source energy and original/target Recorder rows.
+                # Never clear a partially written journal on a guessed rate.
+                from .private_beta_journal_recovery import verify_private_journal
+                previous_revision = saved.get("settings_revision")
+                current_revision = revision(entry.options)
+                try:
+                    importer = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+                    manager = hass.data.get(f"{DOMAIN}_migration", {}).get(entry.entry_id)
+                    if importer is None or manager is None:
+                        raise ValueError("Meter or backup manager is unavailable")
+                    await manager._verify_prior_backup(saved["backup_id"])
+                    for backup_id in saved.get("tail_backups", []):
+                        await manager._verify_prior_backup(backup_id)
+                    proof = await verify_private_journal(hass, entry, saved)
+                    if revision(entry.options) != current_revision:
+                        raise ValueError("Settings changed during recovery verification")
+                except (ValueError, KeyError, TypeError, RuntimeError) as err:
+                    if await _abort_only_if_untouched(hass, entry, saved):
+                        return {
+                            "started": False,
+                            "message": (
+                                "The obsolete repair was independently verified "
+                                "untouched and safely retired. No Recorder rows "
+                                "were changed. Preview the selected day again"
+                            ),
+                            "legacy_journal_retired": True,
+                        }
+                    return {
+                        "started": False, "resume_required": True,
+                        "message": (
+                            "Protected repair preserved. Automatic recovery "
+                            f"requires review: {err}"
+                        )[:500],
+                    }
+                # Rebinding ONLY this proven legacy journal does not mutate
+                # the signed row plan, backup references or Recorder values.
+                # The normal runner will reverify all those inputs under lock.
+                saved["private_beta_recovery"] = {
+                    **proof, "original_settings_revision": previous_revision,
+                }
+                saved["settings_revision"] = current_revision
+                saved["pricing_revision"] = pricing_revision(
+                    entry.options, hass.config.time_zone,
+                )
+                await _store(hass, entry.data["meter_mac"]).async_save(saved)
+                _LOGGER.warning(
+                    "PalPulse private-beta legacy journal %s safely "
+                    "revalidated for %s; original %s",
+                    saved.get("digest"), entry.entry_id, previous_revision,
+                )
         else:
             if not all(isinstance(x, str) and x for x in (
                 start_day, end_day, digest,
