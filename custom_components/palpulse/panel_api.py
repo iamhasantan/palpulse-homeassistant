@@ -33,6 +33,8 @@ REPAIR_GAP_WS_TYPE = "palpulse/repair_gap"
 COST_PREVIEW_WS_TYPE = "palpulse/cost_reconcile_preview"
 COST_APPLY_WS_TYPE = "palpulse/cost_reconcile_apply"
 COST_RESUME_WS_TYPE = "palpulse/cost_reconcile_resume"
+DAY_PREVIEW_WS_TYPE = "palpulse/day_cost_preview"
+DAY_APPLY_WS_TYPE = "palpulse/day_cost_apply"
 COST_ASSESS_WS_TYPE = "palpulse/cost_repair_assess"
 COST_FIX_ENERGY_WS_TYPE = "palpulse/cost_repair_fix_energy"
 CHECKPOINT_EVENT = "esphome.palpulse_checkpoint"
@@ -595,6 +597,76 @@ async def ws_cost_reconcile_apply(hass, connection, msg) -> None:
 
 
 
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): DAY_PREVIEW_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("day"): str,
+})
+@websocket_api.async_response
+async def ws_day_cost_preview(hass, connection, msg) -> None:
+    """Show exact per-hour day repricing; never change Recorder."""
+    matches = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == msg["entry_id"]
+    ]
+    if len(matches) != 1:
+        connection.send_result(msg["id"], {
+            "ok": False, "message": "Selected meter was not found",
+        })
+        return
+    try:
+        from .cost_reconcile_runtime import preview_single_day_recalculation
+        plan = await preview_single_day_recalculation(hass, matches[0], msg["day"])
+        connection.send_result(msg["id"], {
+            "ok": True,
+            "plan": {k: v for k, v in plan.items() if k != "rows"},
+        })
+    except Exception as err:
+        _LOGGER.warning("PalPulse day cost preview refused: %s", err)
+        connection.send_result(msg["id"], {
+            "ok": False, "message": str(err)[:500],
+        })
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    probatio.Required("type"): DAY_APPLY_WS_TYPE,
+    probatio.Required("entry_id"): str,
+    probatio.Required("day"): str,
+    probatio.Required("digest"): str,
+    probatio.Required("expected_revision"): str,
+    probatio.Required("confirm"): bool,
+})
+@websocket_api.async_response
+async def ws_day_cost_apply(hass, connection, msg) -> None:
+    """Only confirm a current signed preview and delegated verified backup."""
+    matches = [
+        entry for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id == msg["entry_id"]
+    ]
+    if (len(matches) != 1 or not msg["confirm"] or
+            revision(matches[0].options) != msg["expected_revision"]):
+        connection.send_result(msg["id"], {
+            "started": False,
+            "message": "Meter, tariff revision or approval changed; preview again",
+        })
+        return
+    try:
+        from .cost_reconcile_supervisor import launch
+        result = await launch(
+            hass, matches[0], msg["day"], msg["day"], msg["digest"],
+            day_recalculation=True,
+        )
+        connection.send_result(msg["id"], result)
+    except Exception as err:
+        _LOGGER.exception("PalPulse verified day cost correction refused")
+        connection.send_result(msg["id"], {
+            "started": False, "message": f"{type(err).__name__}: {err}"[:500],
+        })
+
+
 @websocket_api.require_admin
 @websocket_api.websocket_command({
     probatio.Required("type"): COST_RESUME_WS_TYPE,
@@ -759,6 +831,8 @@ def async_register_panel_api(hass) -> None:
     websocket_api.async_register_command(hass, ws_save_settings)
     websocket_api.async_register_command(hass, ws_link_verified_cost)
     websocket_api.async_register_command(hass, ws_repair_historical_gap)
+    websocket_api.async_register_command(hass, ws_day_cost_preview)
+    websocket_api.async_register_command(hass, ws_day_cost_apply)
     websocket_api.async_register_command(hass, ws_cost_reconcile_preview)
     websocket_api.async_register_command(hass, ws_cost_reconcile_apply)
     websocket_api.async_register_command(hass, ws_cost_reconcile_resume)
