@@ -945,6 +945,58 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.write_calls, 0)
 
 
+
+    async def test_new_journal_survives_unrelated_options_edit_without_legacy_adapter(self):
+        self._make_day_repair_evidence()
+        day = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09"
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        state = MockStore.VALUES[f"palpulse_cost_reconcile_{MAC}"]
+        self.assertTrue(state["pricing_revision"])
+        original_revision = state["settings_revision"]
+        self.entry.options["history_ack_disabled"] = True
+        self.fail_on_call = None
+        result = await runtime.apply_cost_reconciliation(
+            self.hass, self.entry, "2026-11-09", "2026-11-09",
+            day["digest"], day_recalculation=True,
+        )
+        self.assertTrue(result["applied"])
+        self.assertEqual(state["settings_revision"], original_revision)
+        self.assertNotIn("private_beta_recovery", state)
+        self.assertEqual(state["status"], "complete")
+
+    async def test_new_journal_refuses_actual_dated_rate_change(self):
+        self._make_day_repair_evidence()
+        day = await runtime.preview_single_day_recalculation(
+            self.hass, self.entry, "2026-11-09"
+        )
+        self.fail_on_call = 2
+        with self.assertRaisesRegex(RuntimeError, "Synthetic Recorder"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        from custom_components.palpulse.tariff_history import upsert_tariff_version
+        self.entry.options["peak_cents_per_kwh"] = 44.308
+        self.entry.options["tariff_versions"] = upsert_tariff_version(
+            self.entry.options["tariff_versions"], "2026-11-09",
+            self.entry.options, ZONE.key, today=date(2026, 11, 12),
+        )
+        self.fail_on_call = None
+        previous_writes = self.write_calls
+        with self.assertRaisesRegex(ValueError, "Historical tariff inputs changed"):
+            await runtime.apply_cost_reconciliation(
+                self.hass, self.entry, "2026-11-09", "2026-11-09",
+                day["digest"], day_recalculation=True,
+            )
+        self.assertEqual(self.write_calls, previous_writes)
+
     async def _private_beta_interrupted_day(self):
         supervisor = importlib.import_module(
             "custom_components.palpulse.cost_reconcile_supervisor"
@@ -964,6 +1016,9 @@ class CostReconciliationRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["status"], "writing")
         self.assertEqual(saved["rows_committed"], 12)
         self.assertTrue(saved["plan"]["tail_carried_forward"])
+        # Simulate a journal created by 1.0.1b2, which hashed every option
+        # and had no dedicated pricing revision.
+        saved.pop("pricing_revision", None)
         return supervisor, saved
 
     async def test_private_beta_recovers_unrelated_settings_revision_drift(self):
