@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 1.0b1
+## 1.0.1b1
 
 ### Cost recovery and Recorder baseline integrity
 
@@ -305,7 +305,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
 - No existing historical energy or cost gaps are automatically repaired by this release. Never re-run old history imports just to fix a gap.
 - Cost estimates are not billing-grade. Changes in tariff within an hour are conservatively left unpriced rather than estimated; verify actual plans and charges with the retailer.
 
-## 0.1.0b15
+## 0.1.0.1b15
 
 ### What's Changed
 
@@ -350,7 +350,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   compare charges against actual retailer bills before treating the cost
   statistics as billing-grade.
 
-## 0.1.0b14
+## 0.1.0.1b14
 
 ### What's Changed
 
@@ -405,7 +405,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   run import/backup actions during readiness checks.
 - Add regression tests for pending/ready/bad cost states and GUI retry.
 
-## 0.1.0b13
+## 0.1.0.1b13
 
 ### What's Changed
 
@@ -451,7 +451,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   **Devices & services > Integrations > PalPulse > Configure** navigation.
 - Keep import/undo confirmation, backup checks and recorder history unchanged.
 
-## 0.1.0b12
+## 0.1.0.1b12
 
 ### What's Changed
 
@@ -483,7 +483,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   a complete Recorder-inclusive backup.
 
 
-## 0.1.0b11
+## 0.1.0.1b11
 
 ### What's Changed
 
@@ -518,7 +518,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
   live HA validation against Recorder data before using Import.
 
 
-## 0.1.0b10 (experimental, opt-in)
+## 0.1.0.1b10 (experimental, opt-in)
 
 ### What's Changed
 
@@ -757,7 +757,7 @@ This is an **experimental preview**. Back up Home Assistant, including Recorder/
 - Existing dropped records are not automatically recovered. Start with a
   complete, valid new UTC hour before checking historical statistics.
 
-## Initial beta development (0.1.0b1, unpublished)
+## Initial beta development (0.1.0.1b1, unpublished)
 
 - Build a HACS-installable PalPulse companion integration with UI configuration
   for a specific Powerpal BLE device.
