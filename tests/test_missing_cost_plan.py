@@ -173,6 +173,10 @@ class MissingCostPlanTests(unittest.TestCase):
             row["state"] += 7.125
         self.cost = [row for row in self.cost
                      if row["start"] != self.origin + 8*H]
+        # Remove the corresponding energy row too. Otherwise the missing
+        # *cost* at 08:00 becomes the earliest gap and changes the anchor.
+        self.energy = [row for row in self.energy
+                       if row["start"] != self.origin + 8*H]
         with self.assertRaisesRegex(plans.InvalidCostAnchor, "adjacent earlier"):
             self.plan()
 
