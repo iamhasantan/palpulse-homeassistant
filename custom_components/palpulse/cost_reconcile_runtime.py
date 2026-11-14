@@ -25,7 +25,7 @@ from .cost_reconcile_plan import billing_range, build_cost_plan, energy_fingerpr
 from .tariff_history import (
     CONF_TARIFF_VERSIONS, captured_tariff, validate_versions,
 )
-from .panel_settings import revision
+from .panel_settings import revision, pricing_revision
 from .cost_reconcile_legacy_audit import audit_legacy_repair
 from .cost_reconcile_drift import audit_changed_energy
 import copy
@@ -395,8 +395,13 @@ async def apply_cost_reconciliation(
             if stage is not None:
                 stage("verifying_original_backup")
             await manager._verify_prior_backup(saved["backup_id"])
-            if saved.get("settings_revision") != revision(entry.options):
-                raise ValueError("Tariff settings changed during an interrupted repair. Review journal")
+            if saved.get("pricing_revision") is not None:
+                if saved["pricing_revision"] != pricing_revision(
+                    entry.options, hass.config.time_zone,
+                ):
+                    raise ValueError("Historical tariff inputs changed during an interrupted repair. Review journal")
+            elif saved.get("settings_revision") != revision(entry.options):
+                raise ValueError("Older journal needs the private-beta protected revision recovery first")
             plan = saved["plan"]
             for backup_id in saved.get("tail_backups", []):
                 await manager._verify_prior_backup(backup_id)
@@ -475,6 +480,9 @@ async def apply_cost_reconciliation(
                 "start_date": start_day, "end_date": end_day,
                 "backup_id": backup_id, "plan": plan, "rows_committed": 0,
                 "settings_revision": revision(entry.options),
+                "pricing_revision": pricing_revision(
+                    entry.options, hass.config.time_zone,
+                ),
                 "day_recalculation": bool(day_recalculation),
             }
             await store.async_save(saved)
