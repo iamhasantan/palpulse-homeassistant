@@ -174,7 +174,7 @@ async def verify_private_journal(hass, entry, saved):
     cost_end = max(end, max(int(row["start"]) for row in rows) + HOUR)
     # Wait until previously queued recorder work has completed before asking
     # whether a row is missing, still original, or already exactly corrected.
-    from homeassistant.helpers.recorder import get_instance
+    from .cost_reconcile_runtime import get_instance
     await get_instance(hass).async_block_till_done()
     async with importer._lock:
         async with writer._lock:
