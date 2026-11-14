@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 1.0.1b3
+
+### What's Changed
+
+#### Private-beta interrupted cost journal recovery
+
+- Automatically revalidate a protected 1.0.1b2 cost-repair journal when a settings revision changes, rather than interpreting every integration option edit as an electricity tariff change.
+- Independently recalculate **each originally approved hourly charge** from the currently saved dated tariff, original source energy and the journal's immutable pre-repair monetary records. Only an exact match is eligible for continuation, including TOU, free-energy cap, and daily supply fee.
+- Verify the original and any later live-tail Recorder-inclusive backup, detect source-energy drift and external Recorder edits, and classify original, already corrected, or originally missing rows before rebinding the stale revision.
+- Preserve partially written journals and their original backups when rate evidence changes, a backup is missing, an unrelated Recorder write appears, or any hourly amount differs. Never silently restart, double-charge, or reset a meter checkpoint.
+- If a stalled journal has **no modified cost rows**, existing safe supersession can retire it and allow a fresh user preview without discarding historical Recorder changes.
+- Keep this compatibility path in the dedicated `private_beta_journal_recovery.py` module. It is intended for cleanup before public release, not for relaxing normal HA/Recorder integrity safeguards.
+- Add regression tests for partial historical replays, tariff changes, energy drift, concurrent monetary edits, live-tail preservation and missing backups.
+
+Only the private-beta legacy recovery path changes. Standard fresh-user tariff calculation, cost reconciliation safeguards, energy statistics and ESPHome firmware remain unchanged.
+
 ## 1.0.1b2
 
 ### What's Changed
