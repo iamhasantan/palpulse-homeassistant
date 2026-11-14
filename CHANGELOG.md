@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-### Full-day cost recalculation (proposed)
+## 1.0.1b2
+
+### What's Changed
+
+#### Full-day cost recalculation
 
 - Add a native **Recalculate an entire billing day** workflow in the Hourly history panel. It previews each hour's verified energy, original charge (when independently verifiable), and date-effective recalculated price.
 - Require a completely recorded 23-, 24-, or 25-hour local billing day, a verified monetary anchor and end-of-day checkpoint. Apply one daily supply fee, the actual free-energy cap and historical TOU bands. Do not guess any missing energy or tariff.
