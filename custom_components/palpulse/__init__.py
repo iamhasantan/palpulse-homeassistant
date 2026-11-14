@@ -100,6 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # replay doesn't spawn tracked startup tasks or hold up bootstrap.
     incoming: asyncio.Queue[dict] = asyncio.Queue()
     started = asyncio.Event()
+    cost_ready = asyncio.Event()
     if hass.is_running:
         started.set()
     else:
@@ -141,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         if cost_recorder := hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
             try:
                 await cost_recorder.async_start()
+                cost_ready.set()
             except Exception:
                 _LOGGER.exception("PalPulse cost recovery could not start")
 
@@ -190,6 +192,33 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     manager = LegacyMigration(hass, entry, importer.statistic_id)
     await manager.async_load()
     hass.data.setdefault(f"{DOMAIN}_migration", {})[entry.entry_id] = manager
+    # PRIVATE BETA: a previous, explicitly approved partial cost repair
+    # should not remain idle until someone opens the historical panel. Start
+    # only after HA and its normal cost Recorder recovery are both ready.
+    # The supervisor enforces a one-shot source fingerprint, original
+    # backup checks, existing monetary journal and full cost verification.
+    if hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id):
+        async def _resume_approved_beta_cost_repair() -> None:
+            await started.wait()
+            await cost_ready.wait()
+            try:
+                from .cost_reconcile_supervisor import auto_resume_private_beta_journal
+                report = await auto_resume_private_beta_journal(hass, entry)
+                if report.get("status") in ("running", "blocked"):
+                    _LOGGER.warning(
+                        "PalPulse private-beta startup cost recovery for %s: %s",
+                        meter, report,
+                    )
+            except Exception:
+                _LOGGER.exception(
+                    "PalPulse private-beta startup cost recovery assessment failed"
+                )
+
+        entry.async_create_background_task(
+            hass, _resume_approved_beta_cost_repair(),
+            f"PalPulse one-shot cost-journal recovery {meter}",
+            eager_start=False,
+        )
     # Historical cost migration controls are always discoverable, independently
     # of pricing mode and whether a source is configured. Preview fails safely
     # with instructions if there is no source or live cost baseline.
