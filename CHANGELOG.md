@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.0.1b4
+
+### What's Changed
+
+#### Private-beta verified automatic cost recovery
+
+- Automatically assess changed Recorder energy when an unfinished historical cost correction resumes. Do not assume that a changed source fingerprint makes the financial result unsafe or safe.
+- Reprice the original hours only when the existing independent energy/tariff audit proves every affected hour and all original/previously corrected monetary records match the protected journal.
+- Use the existing fresh Recorder-inclusive backup, verification, archival journal, immutable row checks, transactional batches and persisted crash-recovery safeguards. A material cost adjustment is never inferred from partial, missing or ambiguous energy.
+- Keep the saved journal intact if the meter evidence, previous cost rows, dated tariff, original backups or live monetary tail cannot be verified.
+- Provide a temporary, default-enabled **Automatically recover verified interrupted cost repairs (private beta)** setting with an opt-out. This beta-only convenience control is isolated for removal or revision before public availability.
+- Extend regression tests to cover automatic recovery after 12 completed hours, verified material changes, unknown energy, external cost edits, backup failures and the opt-out.
+- No ESPHome firmware changes. No reset of meter NVS or Energy history.
+
 ## 1.0.1b3
 
 ### What's Changed
