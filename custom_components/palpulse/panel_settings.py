@@ -30,6 +30,8 @@ from .pricing import (
 
 COST_SOURCE = "legacy_cost_statistic_id"
 COST_SOURCE_MODE = "legacy_cost_source_mode"
+# Private-beta compatibility. Remove after legacy cost journals are retired.
+PRIVATE_BETA_AUTO_REPRICE = "private_beta_auto_reprice"
 NUMERIC = frozenset((
     CONF_FLAT_CENTS, CONF_PEAK_CENTS, CONF_SHOULDER_CENTS,
     CONF_OFFPEAK_CENTS, CONF_SUPPLY_CENTS, CONF_FREE_CAP_KWH,
@@ -40,6 +42,7 @@ EDITABLE = PRICING | frozenset((
     CONF_TARIFF_START,
     CONF_ACK_SERVICE, CONF_DISABLE_ACK, CONF_AUTO_LINK_ENERGY_COST,
     CONF_LEGACY_ENERGY_SOURCE, COST_SOURCE, COST_SOURCE_MODE,
+    PRIVATE_BETA_AUTO_REPRICE,
 ))
 SOURCE_RE = re.compile(r"^(?:sensor\.[a-z0-9_]+|[a-z0-9_]+:[a-z0-9_]+)$")
 SERVICE_RE = re.compile(r"^esphome\.[a-z][a-z0-9_]+$")
@@ -75,6 +78,7 @@ def visible_settings(options: Mapping[str, object]) -> dict:
     """Return only explicitly permitted, non-secret editable settings."""
     visible = {key: options[key] for key in EDITABLE if key in options}
     visible.setdefault(CONF_DISABLE_ACK, False)
+    visible.setdefault(PRIVATE_BETA_AUTO_REPRICE, True)
     return visible
 
 
@@ -129,6 +133,10 @@ def normalize_settings(
         elif key == CONF_DISABLE_ACK:
             if type(value) is not bool:
                 raise ValueError("Disable acknowledgements must be on or off")
+            updated[key] = value
+        elif key == PRIVATE_BETA_AUTO_REPRICE:
+            if type(value) is not bool:
+                raise ValueError("Private-beta automatic cost recovery must be on or off")
             updated[key] = value
         elif key == CONF_AUTO_LINK_ENERGY_COST:
             if type(value) is not bool:

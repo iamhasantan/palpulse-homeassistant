@@ -13,7 +13,7 @@ from .panel_api import async_register_panel_api
 
 _LOGGER = logging.getLogger(__name__)
 PANEL_PATH = "palpulse"
-PANEL_MODULE = "/api/palpulse_frontend/palpulse-panel.js?v=1.0.1b3"
+PANEL_MODULE = "/api/palpulse_frontend/palpulse-panel.js?v=1.0.1b4"
 PANEL_KEY = f"{DOMAIN}_panel_registered"
 STATIC_KEY = f"{DOMAIN}_panel_static_registered"
 
