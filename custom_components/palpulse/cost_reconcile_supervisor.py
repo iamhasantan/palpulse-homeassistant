@@ -44,6 +44,7 @@ def _public_saved(saved):
         "total_rows": len(plan.get("rows", [])),
         "resume_required": saved.get("status") in INCOMPLETE,
         "day_recalculation": bool(saved.get("day_recalculation")),
+        "private_beta_startup_retry": saved.get("private_beta_startup_retry"),
         "automatic_energy_reprice": saved.get("private_beta_automatic_reprice"),
         "legacy_recovery": (
             "verified" if (saved.get("private_beta_recovery") or {}).get("outcome")
@@ -122,6 +123,80 @@ async def _abort_only_if_untouched(hass, entry, saved: dict) -> bool:
             )
             await _store(hass, entry.data["meter_mac"]).async_save(saved)
             return True
+
+
+async def auto_resume_private_beta_journal(hass, entry) -> dict:
+    """One bounded attempt after HA startup for a previously approved repair.
+
+    PRIVATE-BETA ONLY. This never approves a fresh plan. The existing saved
+    digest, verified backup, price revision, Recorder evidence, and protected
+    write journal are still enforced by launch() and the runtime. A marker
+    prevents identical failed attempts on every restart. A changed source
+    fingerprint permits another single attempt.
+    """
+    import hashlib
+    from .cost_reconcile_plan import energy_fingerprint, HOUR
+
+    if entry.options.get("private_beta_auto_reprice", True) is not True:
+        return {"status": "disabled"}
+    store = _store(hass, entry.data["meter_mac"])
+    saved = await store.async_load() or {}
+    if saved.get("status") not in INCOMPLETE:
+        return {"status": "idle"}
+    # Only resume a previously confirmed job with partial monetary writes.
+    # Never auto-create a new repair or retry unrelated failure categories.
+    if (
+        int(saved.get("rows_committed", 0)) <= 0
+        or not saved.get("backup_id")
+        or not saved.get("digest")
+        or saved.get("day_recalculation")
+        or "Meter energy changed since this cost plan was prepared"
+        not in str(saved.get("last_error", ""))
+    ):
+        return {"status": "requires_manual_review"}
+    importer = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    writer = hass.data.get(f"{DOMAIN}_cost", {}).get(entry.entry_id)
+    if importer is None or writer is None:
+        return {"status": "source_unavailable"}
+    plan = saved.get("plan") or {}
+    if not plan.get("energy_digest") or not plan.get("rows"):
+        return {"status": "invalid_saved_plan"}
+    first, end = int(plan["start_utc"]), int(plan["end_utc"])
+    if not (first < end and end - first <= 100 * 24 * HOUR):
+        return {"status": "outside_private_beta_bound"}
+    # Do not proceed while pending Recorder writes are still in the queue.
+    await get_instance(hass).async_block_till_done()
+    current = await _read(
+        hass, (importer.statistic_id,), first - HOUR, end,
+    )
+    fingerprint = energy_fingerprint(
+        current.get(importer.statistic_id, []), first, end,
+    )
+    attempt_key = hashlib.sha256(
+        ("1.0.1b5:" + saved["digest"] + ":" + fingerprint).encode()
+    ).hexdigest()[:24]
+    previous = saved.get("private_beta_startup_retry") or {}
+    if previous.get("key") == attempt_key:
+        return {"status": "already_checked", "attempt_key": attempt_key}
+    if _jobs(hass).get(entry.entry_id, {}).get("status") == "running":
+        return {"status": "already_running"}
+    # Save the one-shot marker before launching, while still read-only.
+    # Do not save the stale object a second time after launch can replace
+    # the journal with a new, independently verified repair.
+    saved["private_beta_startup_retry"] = {
+        "key": attempt_key,
+        "source_changed": fingerprint != plan["energy_digest"],
+        "status": "requested",
+        "version": "1.0.1b5",
+    }
+    await store.async_save(saved)
+    result = await launch(
+        hass, entry, None, None, None, resume=True,
+    )
+    return {
+        "status": "running" if result.get("started") else "blocked",
+        "message": result.get("message"),
+    }
 
 
 async def assess_changed_energy(hass, entry) -> dict:
