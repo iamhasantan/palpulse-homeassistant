@@ -544,11 +544,45 @@ async def apply_cost_reconciliation(
                     int(plan["start_utc"]), int(plan["end_utc"]),
                 )
                 if live_digest != plan.get("energy_digest"):
-                    if not allow_energy_rebase:
+                    # PRIVATE BETA AUTO-HEAL. Historical energy may have been
+                    # safely imported after the saved plan was approved. Never
+                    # assume that a changed Recorder fingerprint authorises
+                    # a cost overwrite. Use the EXACT same independently
+                    # priced audit, second verified backup, immutable
+                    # original/target comparisons and archived-journal
+                    # recovery required for the explicit Fix Energy action.
+                    auto_reprice = (
+                        incomplete and not day_recalculation
+                        and not allow_energy_rebase
+                        and entry.options.get("private_beta_auto_reprice", True) is True
+                    )
+                    if auto_reprice:
+                        if stage is not None:
+                            stage("auditing_changed_energy_for_safe_automatic_recovery")
+                        report = audit_changed_energy(
+                            saved, rows_before.get(energy_id, []),
+                            entry.options.get(CONF_TARIFF_VERSIONS, []),
+                            hass.config.time_zone,
+                        )
+                        if report.get("digest") != live_digest:
+                            raise ValueError(
+                                "Meter history changed during automatic assessment; "
+                                "original cost journal retained"
+                            )
+                        if not report.get("can_replan"):
+                            raise ValueError(
+                                "Automatic cost recovery safely paused: "
+                                + report["reason"]
+                            )
+                        expected_energy_digest = live_digest
+                        if stage is not None:
+                            stage("creating_verified_backup_for_safe_reprice")
+                    elif not allow_energy_rebase:
                         raise ValueError(
                             "Meter energy changed since this cost plan was "
-                            "prepared. Select Assess changed energy to review "
-                            "which hours need repricing"
+                            "prepared. Automatic recovery is disabled or this "
+                            "journal requires manual review. Select Assess "
+                            "changed energy to inspect the original hours"
                         )
                     if stage is not None:
                         stage("auditing_changed_energy_and_backup")
@@ -561,6 +595,15 @@ async def apply_cost_reconciliation(
                         rows_before.get(energy_id, []), original_costs,
                         expected_digest=expected_energy_digest,
                     )
+                    if auto_reprice:
+                        saved["private_beta_automatic_reprice"] = {
+                            "verified": True,
+                            "affected_hours": int(
+                                saved.get("rebase_summary", {}).get("changed_hours", 0)
+                            ),
+                            "source": "independently_priced_original_cost_snapshot",
+                        }
+                        await store.async_save(saved)
                     plan = saved["plan"]
                     digest = saved["digest"]
                     legacy_needs_audit = False
