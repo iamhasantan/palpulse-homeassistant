@@ -466,6 +466,10 @@ async def apply_cost_reconciliation(
                 raise ValueError("Earlier queued cost jobs prevent safe day recalculation")
             # No Recorder mutation until backup has completed and been verified.
             backup_id = await manager._backup("before cost reconciliation")
+            if day_recalculation:
+                # Day mode changes *all* the day's original charges and
+                # requires an explicitly confirmed, readable source backup.
+                await manager._verify_prior_backup(backup_id)
             saved = {
                 "status": "prepared", "digest": digest,
                 "start_date": start_day, "end_date": end_day,
