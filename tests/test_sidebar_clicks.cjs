@@ -139,6 +139,19 @@ const fakeHass = {
       return { applied: true, missing_hours: 3,
                message: "Verified missing costs restored" };
     }
+    if (message.type === "palpulse/day_cost_preview") {
+      return { ok: true, plan: {
+        digest: "f".repeat(64), repair_safe: true, day_hours: 24,
+        original_daily_cost: null, recalculated_daily_cost: 4.55,
+        hourly_preview: [
+          {start:1794196800, kwh:1.2, original_cost:null,
+           recalculated_cost:.24}
+        ],
+      }};
+    }
+    if (message.type === "palpulse/day_cost_apply") {
+      return { started:true, message:"Protected daily repricing started" };
+    }
     if (message.type === "palpulse/cost_reconcile_preview") {
       return { ok: true, plan: {
         digest: "c".repeat(64), verified_hours: 4, retained_hours: 0,
@@ -280,6 +293,23 @@ async function click(fields) {
   assert.equal(save.changes.free_excess_cents_per_kwh, "19.75");
   assert.ok(effects.navigate.length === 0, "saving must stay inside sidebar");
   panel.shadowRoot.fields = [];
+
+  // Daily cost rebuilding is available directly from hourly history.
+  await click({ tab: "history" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Recalculate an entire billing day"));
+  assert.ok(panel.shadowRoot.innerHTML.includes('id="day-cost-date"'));
+  panel._dayCostDate = "2026-11-09";
+  await click({ "day-cost-preview": "" });
+  assert.ok(panel.shadowRoot.innerHTML.includes("Recalculated daily charge"));
+  assert.ok(panel.shadowRoot.innerHTML.includes("Unverified"),
+            "unknown original day cost must not be labelled zero");
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/day_cost_preview"
+    && x.day === "2026-11-09"));
+  await click({ "day-cost-apply": "" });
+  assert.ok(effects.webSocket.some(x => x.type === "palpulse/day_cost_apply"
+    && x.digest === "f".repeat(64) && x.expected_revision === "version-one"
+    && x.day === "2026-11-09" && x.confirm === true),
+    "daily apply requires reviewed digest, current revision and approval");
 
   // Missing-cost repair must remain visible without opening legacy history.
   await click({ tab: "history" });
